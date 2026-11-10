@@ -1247,8 +1247,8 @@ let currentTweetsList = [];
 let allTweetsMap = {};
 let isFetching = false;
 let pendingCallbacks = {};
-const APP_VERSION = '1.0.6';
-const APP_BUILD = '2026.11.10.7';
+const APP_VERSION = '1.0.7';
+const APP_BUILD = '2026.11.10.8';
 const FEED_REFRESH_MS = 5 * 60 * 1000;
 const FEED_PAGE_SIZE = 6;
 let currentView = 'feed';
@@ -2266,6 +2266,39 @@ function executeSearch(e) {
         if (btn) btn.disabled = false;
         resDiv.innerHTML = `<div class="card"><div class="card-title" style="color:var(--red);">Search unavailable</div><p class="card-desc">${escapeHtml(message)}</p><button type="button" class="btn btn-secondary" onclick="openSearchInX()">Open X search (uses more data)</button></div>`;
     }
+    function handleResponse(response, index, retry) {
+        if (generation !== viewGeneration || currentView !== 'search') return;
+        const parsed = parseTwitterGraphql(response);
+        if (parsed.error) {
+            lastError = parsed.error;
+            if (isQueryIdFailure(parsed)) retry(index + 1);
+            else showUnavailable(lastError);
+            return;
+        }
+        if (btn) btn.disabled = false;
+        renderSearchResults(q, parsed.tweets, resDiv);
+    }
+    function tryPostQuery(index) {
+        if (generation !== viewGeneration || currentView !== 'search') return;
+        if (index >= queryIds.length) {
+            showUnavailable(lastError || 'X changed its search endpoint. Please try again later.');
+            return;
+        }
+        const path = `/i/api/graphql/${queryIds[index]}/SearchTimeline`;
+        const body = JSON.stringify({ variables, features: GRAPHQL_FEATURES, queryId: queryIds[index] });
+        // The original APK supports POST without X's newer GET transaction header.
+        setTimeout(() => {
+            if (generation !== viewGeneration || currentView !== 'search') return;
+            let response;
+            try {
+                response = AndroidBridge.executePost(`https://x.com${path}`, body);
+            } catch (e) {
+                showUnavailable('Search request failed. Please try again.');
+                return;
+            }
+            handleResponse(response, index, tryPostQuery);
+        }, 50);
+    }
     function tryQuery(index) {
         if (generation !== viewGeneration || currentView !== 'search') return;
         if (index >= queryIds.length) {
@@ -2281,18 +2314,11 @@ function executeSearch(e) {
             return;
         }
         const url = `https://x.com${path}?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
-        performAsyncGet(url, (response) => {
-            if (generation !== viewGeneration || currentView !== 'search') return;
-            const parsed = parseTwitterGraphql(response);
-            if (parsed.error) {
-                lastError = parsed.error;
-                if (isQueryIdFailure(parsed)) tryQuery(index + 1);
-                else tryQuery(queryIds.length);
-                return;
-            }
-            if (btn) btn.disabled = false;
-            renderSearchResults(q, parsed.tweets, resDiv);
-        }, transactionId);
+        performAsyncGet(url, (response) => handleResponse(response, index, tryQuery), transactionId);
+    }
+    if (window.AndroidBridge && typeof AndroidBridge.executeSearchGetAsync !== 'function' && typeof AndroidBridge.executePost === 'function') {
+        tryPostQuery(0);
+        return;
     }
     prepareSearchTransaction((error) => {
         if (generation !== viewGeneration || currentView !== 'search') return;
@@ -2461,7 +2487,7 @@ function renderSettings() {
         <div class="card-title">Version & System Info</div>
         <div style="font-size:14px; line-height:1.8; margin-bottom:12px;">
             <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding:6px 0;">
-                <span style="color:var(--text-muted);">Running App Version</span>
+                <span style="color:var(--text-muted);">Web Interface</span>
                 <span style="font-weight:700; color:var(--text);">v${APP_VERSION}</span>
             </div>
             <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding:6px 0;">
