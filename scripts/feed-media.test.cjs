@@ -47,20 +47,35 @@ const high = 'https://video.twimg.com/ext_tw_video/test/high.mp4';
 const parsed = vm.runInContext(`parseSingleTweet(${JSON.stringify({
     rest_id: '123',
     legacy: { full_text: 'A video', extended_entities: { media: [{
-        media_url_https: poster, type: 'video', video_info: { duration_millis: 4900, variants: [
+        media_url_https: poster, type: 'video', ext_alt_text: 'A giant monster near a bridge', video_info: { duration_millis: 4900, variants: [
             { content_type: 'video/mp4', bitrate: 832000, url: high },
             { content_type: 'application/x-mpegURL', url: 'https://video.twimg.com/test.m3u8' },
             { content_type: 'video/mp4', bitrate: 256000, url: low },
             { content_type: 'video/mp4', bitrate: 1000, url: 'https://evil.example/track.mp4' }
         ] } }] } }
 })})`, context);
-assert.equal(parsed.media[0].video_url, low, 'chooses the least costly trusted MP4');
+assert.equal(parsed.media[0].video_url, undefined, 'video URLs are not carried into feed cards');
 assert.equal(parsed.media[0].duration_ms, 4900);
+assert.equal(parsed.media[0].alt_text, 'A giant monster near a bridge');
+assert.equal(vm.runInContext(`mediaPreviewUrl(${JSON.stringify(poster)}, true)`, context), `${poster}?name=thumb`);
+assert.equal(vm.runInContext(`mediaPreviewUrl(${JSON.stringify(poster)}, false)`, context), poster);
 const markup = vm.runInContext(`renderTweetHtml(${JSON.stringify(parsed)})`, context);
-assert.match(markup, /Load small preview/);
-assert.match(markup, /Play low quality video/);
+assert.match(markup, /Load poster frame/);
+assert.match(markup, /name=thumb/, 'preview requests X thumbnail variant');
+assert.match(markup, /data-hd-url="https:\/\/pbs\.twimg\.com\/ext_tw_video_thumb\/test\.jpg"/, 'HD remains an explicit separate request');
+assert.match(markup, /Video · 5s · poster frame/);
+assert.match(markup, /A giant monster near a bridge/);
 assert.doesNotMatch(markup, /<video\b/, 'no video is fetched before a tap');
-assert.doesNotMatch(markup, /high\.mp4|evil\.example/);
+assert.doesNotMatch(markup, /\.mp4|playMedia|Play low quality/, 'video playback is not offered on slow data');
+vm.runInContext("appConfig.image_mode = 'off'", context);
+const textOnly = vm.runInContext(`renderTweetHtml(${JSON.stringify(parsed)})`, context);
+assert.match(textOnly, /A giant monster near a bridge/, 'description remains available without an image request');
+assert.doesNotMatch(textOnly, /<img|\.mp4/);
+vm.runInContext("appConfig.image_mode = 'auto'", context);
+const autoPreview = vm.runInContext(`renderTweetHtml(${JSON.stringify(parsed)})`, context);
+assert.match(autoPreview, /name%3Dthumb/, 'automatic mode requests the small poster');
+assert.match(autoPreview, /retryOriginalPreview\(this\)/, 'failed thumbnail can fall back once');
+vm.runInContext("appConfig.image_mode = 'tap'", context);
 
 cache.set('feed_following', JSON.stringify([{ id: 'old', text: 'Old cached post', media: [] }]));
 vm.runInContext(`currentView = 'feed'; currentTab = 'following'; cursors.following = 'saved-cursor'; loadFeed('following', true)`, context);
@@ -83,6 +98,6 @@ requests.shift().callback(JSON.stringify({ tweets: [parsed], nextCursor: 'new-cu
 assert.equal(refresh.disabled, false);
 assert.equal(progress.textContent, 'Updated just now');
 assert.equal(vm.runInContext('cursors.following', context), 'new-cursor');
-assert.match(main.innerHTML, /Play low quality video/);
+assert.match(main.innerHTML, /Load poster frame/);
 
-console.log('Feed refresh and opt-in media tests passed.');
+console.log('Feed refresh and poster-only media tests passed.');

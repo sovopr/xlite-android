@@ -320,7 +320,6 @@ a { color: var(--accent); text-decoration: none; }
 .feed-progress { color: var(--text-muted); font-size: 12px; }
 .feed-progress.error { color: #fca5a5; }
 .feed-toolbar button:disabled { opacity: .7; }
-.tweet-video { display: block; width: 100%; max-height: 60vh; background: #16181c; border-radius: 12px; margin-top: 8px; }
 .load-more-box {
   padding: 16px;
   text-align: center;
@@ -1286,8 +1285,8 @@ let allTweetsMap = {};
 let bookmarksCache = null;
 let isFetching = false;
 let pendingCallbacks = {};
-const APP_VERSION = '1.0.12';
-const APP_BUILD = '2026.11.10.13';
+const APP_VERSION = '1.0.13';
+const APP_BUILD = '2026.11.10.14';
 const FEED_REFRESH_MS = 5 * 60 * 1000;
 const FEED_PAGE_SIZE = 6;
 let currentView = 'feed';
@@ -1584,7 +1583,6 @@ function loadHdImg(btn, url, imgId) {
     if (!img) return;
 
     const hdImg = new Image();
-    hdImg.src = 'https://local.xlite/img?url=' + encodeURIComponent(url) + '&mode=hd';
     hdImg.onload = function() {
         img.src = hdImg.src;
         btn.innerHTML = '✓ HD Loaded';
@@ -1594,15 +1592,15 @@ function loadHdImg(btn, url, imgId) {
         btn.innerHTML = 'Retry HD';
         btn.disabled = false;
     };
+    hdImg.src = 'https://local.xlite/img?url=' + encodeURIComponent(url) + '&mode=hd';
 }
 
-function loadThumbImg(btn, url, imgId) {
+function loadThumbImg(btn, url, imgId, hdUrl = url) {
     btn.innerHTML = 'Loading image...';
     btn.disabled = true;
     const img = document.createElement('img');
     img.id = imgId;
     img.className = 'tweet-img';
-    img.src = 'https://local.xlite/img?url=' + encodeURIComponent(url) + '&mode=thumb';
     img.onload = function() {
         const parent = btn.parentElement;
         parent.innerHTML = '';
@@ -1610,46 +1608,37 @@ function loadThumbImg(btn, url, imgId) {
         const hdBox = document.createElement('div');
         hdBox.style = 'text-align:right; margin-top:4px;';
         hdBox.innerHTML = `
-            <button type="button" data-url="${escapeHtml(url)}" onclick="loadHdImg(this, this.dataset.url, '${imgId}')" style="font-size:12px; color:var(--text-muted); background:none; border:none; cursor:pointer; padding:4px 8px;">
+            <button type="button" data-url="${escapeHtml(hdUrl)}" onclick="loadHdImg(this, this.dataset.url, '${imgId}')" style="font-size:12px; color:var(--text-muted); background:none; border:none; cursor:pointer; padding:4px 8px;">
                 HD View
             </button>`;
         parent.appendChild(hdBox);
     };
     img.onerror = function() {
+        if (url !== hdUrl && !img.dataset.originalRetried) {
+            img.dataset.originalRetried = '1';
+            img.src = 'https://local.xlite/img?url=' + encodeURIComponent(hdUrl) + '&mode=thumb';
+            return;
+        }
         btn.innerHTML = 'Retry loading';
         btn.disabled = false;
     };
+    img.src = 'https://local.xlite/img?url=' + encodeURIComponent(url) + '&mode=thumb';
 }
 
-function safeVideoUrl(url) {
+function retryOriginalPreview(img) {
+    if (img.dataset.originalRetried || !img.dataset.originalUrl || img.dataset.originalUrl === img.dataset.previewUrl) return;
+    img.dataset.originalRetried = '1';
+    img.src = 'https://local.xlite/img?url=' + encodeURIComponent(img.dataset.originalUrl) + '&mode=thumb';
+}
+
+function mediaPreviewUrl(url, isVideo) {
+    if (!isVideo) return url;
     try {
         const parsed = new URL(url);
-        return parsed.protocol === 'https:' && parsed.hostname === 'video.twimg.com' ? parsed.href : '';
-    } catch (_) { return ''; }
-}
-
-function playMedia(btn) {
-    const url = safeVideoUrl(btn.dataset.videoUrl);
-    if (!url) return;
-    const box = btn.parentElement;
-    const video = document.createElement('video');
-    video.className = 'tweet-video';
-    video.controls = true;
-    video.playsInline = true;
-    video.preload = 'none';
-    video.src = url;
-    video.onerror = () => {
-        btn.disabled = false;
-        btn.textContent = 'Video unavailable · Retry';
-        if (video.parentElement) video.remove();
-    };
-    btn.disabled = true;
-    btn.textContent = 'Loading video…';
-    box.insertBefore(video, btn);
-    video.play().then(() => btn.remove()).catch(() => {
-        // WebView may require its own play control after buffering.
-        btn.textContent = 'Tap video controls to play';
-    });
+        if (parsed.protocol !== 'https:' || parsed.hostname !== 'pbs.twimg.com') return url;
+        parsed.searchParams.set('name', 'thumb');
+        return parsed.href;
+    } catch (_) { return url; }
 }
 
 function renderTweetHtml(tw) {
@@ -1663,13 +1652,13 @@ function renderTweetHtml(tw) {
         tw.media.forEach(m => {
             let imgId = 'img_' + Math.random().toString(36).substr(2, 9);
             const isVideo = m.type === 'video' || m.type === 'animated_gif';
-            const videoUrl = safeVideoUrl(m.video_url);
-            const mediaLabel = isVideo ? (m.type === 'animated_gif' ? 'GIF' : 'Video') + (m.duration_ms ? ' · ' + Math.ceil(m.duration_ms / 1000) + 's' : '') : 'Photo';
+            const previewUrl = mediaPreviewUrl(m.url, isVideo);
+            const mediaLabel = isVideo ? (m.type === 'animated_gif' ? 'GIF' : 'Video') + (m.duration_ms ? ' · ' + Math.ceil(m.duration_ms / 1000) + 's' : '') + ' · poster frame' : 'Photo';
             if (isVideo) mediaHtml += `<div style="font-size:12px; color:var(--text-muted); margin-top:6px;">${mediaLabel}</div>`;
             if (appConfig.image_mode === 'auto') {
                 mediaHtml += `
                 <div>
-                    <img id="${imgId}" src="https://local.xlite/img?url=${encodeURIComponent(m.url)}&mode=thumb" class="tweet-img" loading="lazy" />
+                    <img id="${imgId}" src="https://local.xlite/img?url=${encodeURIComponent(previewUrl)}&mode=thumb" class="tweet-img" loading="lazy" data-preview-url="${escapeHtml(previewUrl)}" data-original-url="${escapeHtml(m.url)}" onerror="retryOriginalPreview(this)" />
                     <div style="text-align:right; margin-top:4px;">
                         <button type="button" data-url="${escapeHtml(m.url)}" onclick="loadHdImg(this, this.dataset.url, '${imgId}')" style="font-size:12px; color:var(--text-muted); background:none; border:none; cursor:pointer; padding:4px 8px;">
                             HD View
@@ -1681,12 +1670,12 @@ function renderTweetHtml(tw) {
             } else {
                 mediaHtml += `
                 <div style="margin-top:6px;">
-                    <button type="button" class="btn btn-secondary btn-block" data-url="${escapeHtml(m.url)}" onclick="loadThumbImg(this, this.dataset.url, '${imgId}')" style="font-size:13px; padding:8px 14px;">
-                        Load small preview
+                    <button type="button" class="btn btn-secondary btn-block" data-url="${escapeHtml(previewUrl)}" data-hd-url="${escapeHtml(m.url)}" onclick="loadThumbImg(this, this.dataset.url, '${imgId}', this.dataset.hdUrl)" style="font-size:13px; padding:8px 14px;">
+                        ${isVideo ? 'Load poster frame' : 'Load small preview'}
                     </button>
                 </div>`;
             }
-            if (videoUrl) mediaHtml += `<div style="margin-top:6px;"><button type="button" class="btn btn-secondary" data-video-url="${escapeHtml(videoUrl)}" onclick="playMedia(this)" style="font-size:13px; padding:8px 14px;">Play low quality ${m.type === 'animated_gif' ? 'GIF' : 'video'}</button></div>`;
+            if (m.alt_text) mediaHtml += `<div style="font-size:13px; color:var(--text-muted); margin-top:6px;">${escapeHtml(m.alt_text)}</div>`;
         });
         mediaHtml += '</div>';
     }
@@ -1885,10 +1874,7 @@ function parseSingleTweet(tw) {
     extMedia.forEach(m => {
         let mUrl = m.media_url_https || m.media_url;
         if (mUrl) {
-            const variants = (m.video_info?.variants || [])
-                .filter(v => v.content_type === 'video/mp4' && safeVideoUrl(v.url))
-                .sort((a, b) => (a.bitrate || 0) - (b.bitrate || 0));
-            media.push({ url: mUrl, type: m.type, video_url: variants[0]?.url || '', duration_ms: m.video_info?.duration_millis || 0 });
+            media.push({ url: mUrl, type: m.type, duration_ms: m.video_info?.duration_millis || 0, alt_text: m.ext_alt_text || m.alt_text || '' });
         }
     });
 

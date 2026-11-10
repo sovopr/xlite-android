@@ -15,7 +15,7 @@ The app is designed with Airtel's throttled 64 kbps FUP connection in mind. Actu
 | Conversations | Open a post, read replies, and reply. |
 | Posting | Compose a text post. |
 | Images | Previews load on tap by default; image loading can also be turned off or made automatic. |
-| Video and GIFs | Small poster previews and optional playback using the lowest bitrate MP4. Playback never starts automatically. |
+| Video and GIFs | Small poster frames on tap, plus available descriptions and duration. Video files are not fetched in the feed. |
 | Updates | Install web interface fixes from **Settings → Check for Updates**. |
 
 The app keeps a small feed page size and uses compressed HTTP responses where X supports them. Search on the original v1.0.2 APK uses its existing POST bridge. Newer APKs use GET search with X's transaction header; the setup data is reused for 15 minutes.
@@ -31,7 +31,7 @@ These cookies grant access to your X account. Keep them private. X Lite stores t
 
 ### APK version and web interface version
 
-Settings shows both versions. A web interface update changes the screens and JavaScript but does not replace the installed APK. For example, **Web Interface v1.0.12** can run inside **Installed APK v1.0.2**. Native Android changes and the launcher icon require a new APK; the blue halo launcher icon is included in the v1.0.12 APK.
+Settings shows both versions. A web interface update changes the screens and JavaScript but does not replace the installed APK. For example, **Web Interface v1.0.13** can run inside **Installed APK v1.0.2**. Native Android changes and the launcher icon require a new APK; the blue halo launcher icon is included in the v1.0.12 and later APKs.
 
 APK builds from the current GitHub workflow use a CI-generated debug signing key. A new download may therefore fail to install over an older one. Use the in-app updater for web interface fixes. If an APK replacement is necessary, save your cookie values before uninstalling; Android removes the app's local data on uninstall.
 
@@ -40,7 +40,7 @@ APK builds from the current GitHub workflow use a CI-generated debug signing key
 - Leave image mode on **Tap to load** or choose **Off** in Settings.
 - Use **Offline** to read the cached feed without a new request.
 - Use **Load More** only when you need another page of posts or search results.
-- Video and GIF playback is optional. Even the lowest quality MP4 can exceed 64 kbps and buffer. A poster preview uses less data than downloading several video frames.
+- Video and GIF posts show a single poster frame on request. The app does not start MP4 playback on a 64 kbps connection. In a controlled 64 kbps transfer test, an 18-second 267 kbps MP4 took 74 seconds; three short clips still took 10 seconds. A pre-generated three-frame animation took 1.4 seconds, but the feed data used here supplies one poster image, so creating that animation on the phone would require fetching video data first.
 - Search results and timeline data still come from X, so a slow or unstable connection can delay or interrupt a request. A failed search page can be retried without clearing the results already shown.
 
 ## Build locally
