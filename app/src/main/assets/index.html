@@ -382,14 +382,16 @@ const TIMELINE_CONFIG = {
         }
     },
     foryou: {
-        queryId: '2ee46L1AFXmnTa0EvUog-Q',
+        queryId: 'KmJCeZ__ef1fNos7tKN_fg',
+        fallbackQueryId: 'fedFLLzmiCAuzPgA8lyh8Q',
         op: 'HomeTimeline',
         buildVariables: (count, cursor) => {
             let v = {
                 count: count || 12,
                 includePromotedContent: false,
-                latestControlAvailable: true,
-                requestContext: 'launch'
+                requestContext: 'launch',
+                seenTweetIds: [],
+                withCommunity: true
             };
             if (cursor) v.cursor = cursor;
             return v;
@@ -398,30 +400,45 @@ const TIMELINE_CONFIG = {
 };
 
 const GRAPHQL_FEATURES = {
-    responsive_web_graphql_timeline_navigation_enabled: true,
     rweb_video_screen_enabled: false,
+    rweb_cashtags_enabled: true,
     profile_label_improvements_pcf_label_in_post_enabled: true,
-    responsive_web_profile_redirect_enabled: false,
+    responsive_web_profile_redirect_enabled: true,
     rweb_tipjar_consumption_enabled: false,
     verified_phone_label_enabled: false,
     creator_subscriptions_tweet_preview_api_enabled: true,
-    responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
+    responsive_web_graphql_timeline_navigation_enabled: true,
+    premium_content_api_read_enabled: false,
     communities_web_enable_tweet_community_results_fetch: true,
     c9s_tweet_anatomy_moderator_badge_enabled: true,
+    responsive_web_grok_analyze_button_fetch_trends_enabled: false,
+    responsive_web_grok_analyze_post_followups_enabled: true,
+    rweb_cashtags_composer_attachment_enabled: true,
+    responsive_web_jetfuel_frame: true,
+    rweb_sports_post_context_enabled: true,
+    x_elections_post_context_enabled: true,
+    responsive_web_grok_share_attachment_enabled: true,
+    responsive_web_grok_annotations_enabled: true,
     articles_preview_enabled: true,
     responsive_web_edit_tweet_api_enabled: true,
     graphql_is_translatable_rweb_tweet_is_translatable_enabled: true,
     view_counts_everywhere_api_enabled: true,
     longform_notetweets_consumption_enabled: true,
     responsive_web_twitter_article_tweet_consumption_enabled: true,
-    tweet_awards_web_tipping_enabled: false,
-    creator_subscriptions_quote_tweet_preview_enabled: false,
+    content_disclosure_indicator_enabled: true,
+    content_disclosure_ai_generated_indicator_enabled: true,
+    responsive_web_grok_show_grok_translated_post: true,
+    responsive_web_grok_analysis_button_from_backend: true,
+    post_ctas_fetch_enabled: true,
     freedom_of_speech_not_reach_fetch_enabled: true,
     standardized_nudges_misinfo: true,
     tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true,
-    rweb_video_timestamps_enabled: false,
     longform_notetweets_rich_text_read_enabled: true,
-    longform_notetweets_inline_media_enabled: true,
+    longform_notetweets_inline_media_enabled: false,
+    responsive_web_nested_quote_preview_enabled: true,
+    responsive_web_grok_image_annotation_enabled: true,
+    responsive_web_grok_imagine_annotation_enabled: true,
+    responsive_web_grok_community_note_auto_translation_is_enabled: true,
     responsive_web_enhance_cards_enabled: false
 };
 
@@ -974,49 +991,29 @@ function fetchFeedData(feedType, isPaging) {
             const container = document.getElementById('mainContent');
 
             if (parsed.error) {
-                let cachedFeed = AndroidBridge ? AndroidBridge.getCache('feed_' + feedType) : '';
-                if (cachedFeed && !isPaging) {
-                    showStatus('Offline: Showing cached tweets', false, 3000);
-                } else {
-                    showStatus('', false);
-                    container.innerHTML = `
-                    <div class="card">
-                        <div class="card-title" style="color:var(--red);">Error loading feed</div>
-                        <p class="card-desc">${escapeHtml(parsed.error)}</p>
-                        <a href="javascript:nav('settings')" class="btn btn-secondary">Check Settings &rarr;</a>
-                    </div>`;
+                if (cfg.fallbackQueryId) {
+                    let fallbackUrl = `https://x.com/i/api/graphql/${cfg.fallbackQueryId}/${cfg.op}?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
+                    performAsyncGet(fallbackUrl, (fbStr) => {
+                        let fbParsed = parseTwitterGraphql(fbStr);
+                        if (fbParsed.tweets && fbParsed.tweets.length > 0) {
+                            applyFeedTweets(feedType, fbParsed, isPaging);
+                        } else if (feedType === 'foryou') {
+                            // Fallback to following feed so user never gets a broken screen
+                            fetchFeedData('following', isPaging);
+                        } else {
+                            displayFeedError(feedType, fbParsed, isPaging);
+                        }
+                    });
+                    return;
+                } else if (feedType === 'foryou') {
+                    fetchFeedData('following', isPaging);
+                    return;
                 }
+                displayFeedError(feedType, parsed, isPaging);
                 return;
             }
 
-            if (parsed.tweets.length === 0 && !isPaging) {
-                showStatus('', false);
-                container.innerHTML = '<div class="card"><p class="card-desc">No tweets found.</p></div>';
-                return;
-            }
-
-            cursors[feedType] = parsed.nextCursor;
-
-            if (isPaging) {
-                currentTweetsList.push(...parsed.tweets);
-                parsed.tweets.forEach(t => { if (t && t.id) allTweetsMap[t.id] = t; });
-                let feedDiv = document.getElementById('feedContainer');
-                if (feedDiv) {
-                    feedDiv.insertAdjacentHTML('beforeend', parsed.tweets.map(renderTweetHtml).join(''));
-                }
-                showStatus('', false);
-            } else {
-                currentTweetsList = parsed.tweets;
-                parsed.tweets.forEach(t => { if (t && t.id) allTweetsMap[t.id] = t; });
-                if (window.AndroidBridge) {
-                    AndroidBridge.saveCache('feed_' + feedType, JSON.stringify(parsed.tweets));
-                    AndroidBridge.saveCache('feed_cache', JSON.stringify(parsed.tweets));
-                }
-                container.innerHTML = '<div id="feedContainer">' + parsed.tweets.map(renderTweetHtml).join('') + '</div>';
-                showStatus('Feed updated', false, 1500);
-            }
-
-            renderLoadMoreButton(feedType);
+            applyFeedTweets(feedType, parsed, isPaging);
         } catch(err) {
             console.error("fetchFeedData error:", err);
             showStatus('', false);
@@ -1024,6 +1021,54 @@ function fetchFeedData(feedType, isPaging) {
             isFetching = false;
         }
     });
+}
+
+function applyFeedTweets(feedType, parsed, isPaging) {
+    const container = document.getElementById('mainContent');
+    if (parsed.tweets.length === 0 && !isPaging) {
+        showStatus('', false);
+        container.innerHTML = '<div class="card"><p class="card-desc">No tweets found.</p></div>';
+        return;
+    }
+
+    cursors[feedType] = parsed.nextCursor;
+
+    if (isPaging) {
+        currentTweetsList.push(...parsed.tweets);
+        parsed.tweets.forEach(t => { if (t && t.id) allTweetsMap[t.id] = t; });
+        let feedDiv = document.getElementById('feedContainer');
+        if (feedDiv) {
+            feedDiv.insertAdjacentHTML('beforeend', parsed.tweets.map(renderTweetHtml).join(''));
+        }
+        showStatus('', false);
+    } else {
+        currentTweetsList = parsed.tweets;
+        parsed.tweets.forEach(t => { if (t && t.id) allTweetsMap[t.id] = t; });
+        if (window.AndroidBridge) {
+            AndroidBridge.saveCache('feed_' + feedType, JSON.stringify(parsed.tweets));
+            AndroidBridge.saveCache('feed_cache', JSON.stringify(parsed.tweets));
+        }
+        container.innerHTML = '<div id="feedContainer">' + parsed.tweets.map(renderTweetHtml).join('') + '</div>';
+        showStatus('Feed updated', false, 1500);
+    }
+
+    renderLoadMoreButton(feedType);
+}
+
+function displayFeedError(feedType, parsed, isPaging) {
+    const container = document.getElementById('mainContent');
+    let cachedFeed = AndroidBridge ? AndroidBridge.getCache('feed_' + feedType) : '';
+    if (cachedFeed && !isPaging) {
+        showStatus('Offline: Showing cached tweets', false, 3000);
+    } else {
+        showStatus('', false);
+        container.innerHTML = `
+        <div class="card">
+            <div class="card-title" style="color:var(--red);">Error loading feed</div>
+            <p class="card-desc">${escapeHtml(parsed.error || 'Network error')}</p>
+            <a href="javascript:nav('settings')" class="btn btn-secondary">Check Settings &rarr;</a>
+        </div>`;
+    }
 }
 
 function renderLoadMoreButton(feedType) {
@@ -1101,32 +1146,44 @@ function renderThreadView(tweetId) {
 
     performAsyncGet(url, (resStr) => {
         let parsed = parseTwitterGraphql(resStr);
-        const repContainer = document.getElementById('repliesContainer');
-        if (!repContainer) return;
+        if (parsed.error && (!parsed.tweets || !parsed.tweets.length)) {
+            let fbUrl = `https://x.com/i/api/graphql/dQDdKtt882nl-Km98FJGSQ/TweetDetail?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
+            performAsyncGet(fbUrl, (fbStr) => {
+                let fbParsed = parseTwitterGraphql(fbStr);
+                renderThreadData(tweetId, focal, fbParsed);
+            });
+            return;
+        }
+        renderThreadData(tweetId, focal, parsed);
+    });
+}
 
-        if (!focal) {
-            let found = parsed.tweets.find(t => t.id === tweetId);
-            if (found) {
-                focal = found;
-                allTweetsMap[tweetId] = focal;
-                let threadBox = document.getElementById('threadContainer');
-                if (threadBox) {
-                    let sp = threadBox.querySelector('.spinner');
-                    if (sp) sp.outerHTML = renderTweetHtml(focal);
-                }
+function renderThreadData(tweetId, focal, parsed) {
+    const repContainer = document.getElementById('repliesContainer');
+    if (!repContainer) return;
+
+    if (!focal) {
+        let found = parsed.tweets.find(t => t.id === tweetId);
+        if (found) {
+            focal = found;
+            allTweetsMap[tweetId] = focal;
+            let threadBox = document.getElementById('threadContainer');
+            if (threadBox) {
+                let sp = threadBox.querySelector('.spinner');
+                if (sp) sp.outerHTML = renderTweetHtml(focal);
             }
         }
+    }
 
-        let replies = parsed.tweets.filter(t => t.id !== tweetId);
+    let replies = parsed.tweets.filter(t => t.id !== tweetId);
 
-        if (replies.length > 0) {
-            repContainer.innerHTML = '<div style="padding:12px 16px; font-size:14px; font-weight:700; color:var(--text-muted); border-bottom:1px solid var(--border);">Replies (' + replies.length + ')</div>' + replies.map(renderTweetHtml).join('');
-        } else if (parsed.error && !focal) {
-            repContainer.innerHTML = `<div class="card"><div class="card-title" style="color:var(--red);">Error</div><p class="card-desc">${escapeHtml(parsed.error)}</p></div>`;
-        } else {
-            repContainer.innerHTML = '<div style="padding:28px 16px; text-align:center; color:var(--text-muted); font-size:14px;">No replies yet</div>';
-        }
-    });
+    if (replies.length > 0) {
+        repContainer.innerHTML = '<div style="padding:12px 16px; font-size:14px; font-weight:700; color:var(--text-muted); border-bottom:1px solid var(--border);">Replies (' + replies.length + ')</div>' + replies.map(renderTweetHtml).join('');
+    } else if (parsed.error && !focal) {
+        repContainer.innerHTML = `<div class="card"><div class="card-title" style="color:var(--red);">Error</div><p class="card-desc">${escapeHtml(parsed.error)}</p></div>`;
+    } else {
+        repContainer.innerHTML = '<div style="padding:28px 16px; text-align:center; color:var(--text-muted); font-size:14px;">No replies yet</div>';
+    }
 }
 
 function goBackToFeed() {
@@ -1381,7 +1438,7 @@ function renderSettings() {
     const container = document.getElementById('mainContent');
     let cookies = { auth_token: '', ct0: '', image_mode: 'tap' };
     let isLive = false;
-    let versionInfo = { version: "1.0.3", build: "2026.11.10.4", isLive: false };
+    let versionInfo = { version: "1.0.4", build: "2026.11.10.5", isLive: false };
 
     if (window.AndroidBridge) {
         try { cookies = JSON.parse(AndroidBridge.getCookies()); } catch(e){}
@@ -1399,11 +1456,11 @@ function renderSettings() {
         <div style="font-size:14px; line-height:1.8; margin-bottom:12px;">
             <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding:6px 0;">
                 <span style="color:var(--text-muted);">App Version</span>
-                <span style="font-weight:700; color:var(--text);">v${escapeHtml(versionInfo.version || '1.0.3')}</span>
+                <span style="font-weight:700; color:var(--text);">v${escapeHtml(versionInfo.version || '1.0.4')}</span>
             </div>
             <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding:6px 0;">
                 <span style="color:var(--text-muted);">Build</span>
-                <span style="color:var(--text);">${escapeHtml(versionInfo.build || '2026.11.10.4')}</span>
+                <span style="color:var(--text);">${escapeHtml(versionInfo.build || '2026.11.10.5')}</span>
             </div>
             <div style="display:flex; justify-content:space-between; padding:6px 0;">
                 <span style="color:var(--text-muted);">Runtime Source</span>
@@ -1423,7 +1480,7 @@ function renderSettings() {
             Check for Updates
         </button>
         <div id="updateStatusText" style="margin-top:10px; font-size:13px; color:var(--text-muted); text-align:center;">
-            ${isLive ? 'Currently running live OTA version (v1.0.3)' : 'Currently running bundled APK version (v1.0.3)'}
+            ${isLive ? 'Currently running live OTA version (v1.0.4)' : 'Currently running bundled APK version (v1.0.4)'}
         </div>
         ${isLive ? `
         <button type="button" class="btn btn-secondary btn-block" style="margin-top:10px; font-size:13px;" onclick="resetToFactoryAsset()">
@@ -1535,7 +1592,7 @@ function applyUpdate(newHtml) {
             if (updateBtn) updateBtn.disabled = false;
         }
     } else {
-        alert("Please install v1.0.3 APK once to enable in-app updates.");
+        alert("Please install v1.0.4 APK once to enable in-app updates.");
     }
 }
 

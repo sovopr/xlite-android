@@ -206,6 +206,6 @@ class TwitterBridge(private val context: Context) {
     @JavascriptInterface
     fun getAppVersionInfo(): String {
         val isLive = isUsingLiveHtml()
-        return """{"version": "1.0.3", "build": "2026.11.10.4", "isLive": $isLive}"""
+        return """{"version": "1.0.4", "build": "2026.11.10.5", "isLive": $isLive}"""
     }
 }
