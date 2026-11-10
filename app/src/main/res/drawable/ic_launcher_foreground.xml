@@ -20,6 +20,14 @@
             android:pathData="M47,13h5l-33,39h-5z" />
         <path
             android:fillColor="#1D9BF0"
+            android:fillAlpha="0.12"
+            android:pathData="M58,20a7,7 0,1 1,-14 0a7,7 0,1 1,14 0z" />
+        <path
+            android:fillColor="#1D9BF0"
+            android:fillAlpha="0.22"
+            android:pathData="M56,20a5,5 0,1 1,-10 0a5,5 0,1 1,10 0z" />
+        <path
+            android:fillColor="#1D9BF0"
             android:pathData="M54.5,20a3.5,3.5 0,1 1,-7 0a3.5,3.5 0,1 1,7 0z" />
     </group>
 </vector>

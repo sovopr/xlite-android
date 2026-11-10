@@ -5,5 +5,7 @@
   <path d="M14 13h9l30 39h-9z" fill="#f7f9fa"/>
   <path d="M18.5 15.5H21l27.5 34H46z" fill="#000"/>
   <path d="M47 13h5L19 52h-5z" fill="#f7f9fa"/>
+  <circle cx="51" cy="20" r="7" fill="#1d9bf0" opacity=".12"/>
+  <circle cx="51" cy="20" r="5" fill="#1d9bf0" opacity=".22"/>
   <circle cx="51" cy="20" r="3.5" fill="#1d9bf0"/>
 </svg>

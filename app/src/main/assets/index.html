@@ -296,6 +296,31 @@ a { color: var(--accent); text-decoration: none; }
   color: var(--text-muted);
   font-size: 14px;
 }
+.spinner::before, .inline-spinner::before {
+  content: '';
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 7px;
+  vertical-align: -2px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.feed-toolbar {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.feed-progress { color: var(--text-muted); font-size: 12px; }
+.feed-progress.error { color: #fca5a5; }
+.feed-toolbar button:disabled { opacity: .7; }
+.tweet-video { display: block; width: 100%; max-height: 60vh; background: #16181c; border-radius: 12px; margin-top: 8px; }
 .load-more-box {
   padding: 16px;
   text-align: center;
@@ -330,6 +355,8 @@ a { color: var(--accent); text-decoration: none; }
             <path d="M14 13h9l30 39h-9z" fill="#f7f9fa"/>
             <path d="M18.5 15.5H21l27.5 34H46z" fill="#000"/>
             <path d="M47 13h5L19 52h-5z" fill="#f7f9fa"/>
+            <circle cx="51" cy="20" r="7" fill="#1d9bf0" opacity=".12"/>
+            <circle cx="51" cy="20" r="5" fill="#1d9bf0" opacity=".22"/>
             <circle cx="51" cy="20" r="3.5" fill="#1d9bf0"/>
         </svg>
         <span class="header-sub">Lite</span>
@@ -1256,10 +1283,11 @@ let cursors = { following: null, foryou: null };
 let appConfig = { auth_token: '', ct0: '', image_mode: 'tap' };
 let currentTweetsList = [];
 let allTweetsMap = {};
+let bookmarksCache = null;
 let isFetching = false;
 let pendingCallbacks = {};
-const APP_VERSION = '1.0.10';
-const APP_BUILD = '2026.11.10.11';
+const APP_VERSION = '1.0.11';
+const APP_BUILD = '2026.11.10.12';
 const FEED_REFRESH_MS = 5 * 60 * 1000;
 const FEED_PAGE_SIZE = 6;
 let currentView = 'feed';
@@ -1468,6 +1496,7 @@ function switchFeed(tab) {
     currentView = 'feed';
     viewGeneration++;
     currentTab = tab;
+    currentTweetsList = [];
     currentFeedOrigin = tab;
     try { localStorage.setItem('last_active_tab', tab); } catch(e){}
     document.querySelectorAll('.nav-tab').forEach((el, idx) => {
@@ -1501,10 +1530,12 @@ function linkify(text) {
 }
 
 function getBookmarks() {
+    if (bookmarksCache) return bookmarksCache;
     try {
         let b = window.AndroidBridge ? AndroidBridge.getCache('bookmarks') : localStorage.getItem('bookmarks');
-        return b ? JSON.parse(b) : [];
-    } catch(e) { return []; }
+        bookmarksCache = b ? JSON.parse(b) : [];
+        return bookmarksCache;
+    } catch(e) { bookmarksCache = []; return bookmarksCache; }
 }
 
 function isBookmarked(id) {
@@ -1579,7 +1610,7 @@ function loadThumbImg(btn, url, imgId) {
         const hdBox = document.createElement('div');
         hdBox.style = 'text-align:right; margin-top:4px;';
         hdBox.innerHTML = `
-            <button type="button" onclick="loadHdImg(this, '${escapeHtml(url)}', '${imgId}')" style="font-size:12px; color:var(--text-muted); background:none; border:none; cursor:pointer; padding:4px 8px;">
+            <button type="button" data-url="${escapeHtml(url)}" onclick="loadHdImg(this, this.dataset.url, '${imgId}')" style="font-size:12px; color:var(--text-muted); background:none; border:none; cursor:pointer; padding:4px 8px;">
                 HD View
             </button>`;
         parent.appendChild(hdBox);
@@ -1588,6 +1619,37 @@ function loadThumbImg(btn, url, imgId) {
         btn.innerHTML = 'Retry loading';
         btn.disabled = false;
     };
+}
+
+function safeVideoUrl(url) {
+    try {
+        const parsed = new URL(url);
+        return parsed.protocol === 'https:' && parsed.hostname === 'video.twimg.com' ? parsed.href : '';
+    } catch (_) { return ''; }
+}
+
+function playMedia(btn) {
+    const url = safeVideoUrl(btn.dataset.videoUrl);
+    if (!url) return;
+    const box = btn.parentElement;
+    const video = document.createElement('video');
+    video.className = 'tweet-video';
+    video.controls = true;
+    video.playsInline = true;
+    video.preload = 'none';
+    video.src = url;
+    video.onerror = () => {
+        btn.disabled = false;
+        btn.textContent = 'Video unavailable · Retry';
+        if (video.parentElement) video.remove();
+    };
+    btn.disabled = true;
+    btn.textContent = 'Loading video…';
+    box.insertBefore(video, btn);
+    video.play().then(() => btn.remove()).catch(() => {
+        // WebView may require its own play control after buffering.
+        btn.textContent = 'Tap video controls to play';
+    });
 }
 
 function renderTweetHtml(tw) {
@@ -1600,26 +1662,31 @@ function renderTweetHtml(tw) {
         mediaHtml += '<div style="margin-top:8px;" onclick="event.stopPropagation()">';
         tw.media.forEach(m => {
             let imgId = 'img_' + Math.random().toString(36).substr(2, 9);
+            const isVideo = m.type === 'video' || m.type === 'animated_gif';
+            const videoUrl = safeVideoUrl(m.video_url);
+            const mediaLabel = isVideo ? (m.type === 'animated_gif' ? 'GIF' : 'Video') + (m.duration_ms ? ' · ' + Math.ceil(m.duration_ms / 1000) + 's' : '') : 'Photo';
+            if (isVideo) mediaHtml += `<div style="font-size:12px; color:var(--text-muted); margin-top:6px;">${mediaLabel}</div>`;
             if (appConfig.image_mode === 'auto') {
                 mediaHtml += `
                 <div>
                     <img id="${imgId}" src="https://local.xlite/img?url=${encodeURIComponent(m.url)}&mode=thumb" class="tweet-img" loading="lazy" />
                     <div style="text-align:right; margin-top:4px;">
-                        <button type="button" onclick="loadHdImg(this, '${escapeHtml(m.url)}', '${imgId}')" style="font-size:12px; color:var(--text-muted); background:none; border:none; cursor:pointer; padding:4px 8px;">
+                        <button type="button" data-url="${escapeHtml(m.url)}" onclick="loadHdImg(this, this.dataset.url, '${imgId}')" style="font-size:12px; color:var(--text-muted); background:none; border:none; cursor:pointer; padding:4px 8px;">
                             HD View
                         </button>
                     </div>
                 </div>`;
             } else if (appConfig.image_mode === 'off') {
-                mediaHtml += `<div style="font-size:13px; color:var(--text-muted); margin-top:4px;">[Photo]</div>`;
+                mediaHtml += `<div style="font-size:13px; color:var(--text-muted); margin-top:4px;">[${mediaLabel}]</div>`;
             } else {
                 mediaHtml += `
                 <div style="margin-top:6px;">
-                    <button type="button" class="btn btn-secondary btn-block" onclick="loadThumbImg(this, '${escapeHtml(m.url)}', '${imgId}')" style="font-size:13px; padding:8px 14px;">
+                    <button type="button" class="btn btn-secondary btn-block" data-url="${escapeHtml(m.url)}" onclick="loadThumbImg(this, this.dataset.url, '${imgId}')" style="font-size:13px; padding:8px 14px;">
                         Load small preview
                     </button>
                 </div>`;
             }
+            if (videoUrl) mediaHtml += `<div style="margin-top:6px;"><button type="button" class="btn btn-secondary" data-video-url="${escapeHtml(videoUrl)}" onclick="playMedia(this)" style="font-size:13px; padding:8px 14px;">Play low quality ${m.type === 'animated_gif' ? 'GIF' : 'video'}</button></div>`;
         });
         mediaHtml += '</div>';
     }
@@ -1818,7 +1885,10 @@ function parseSingleTweet(tw) {
     extMedia.forEach(m => {
         let mUrl = m.media_url_https || m.media_url;
         if (mUrl) {
-            media.push({ url: mUrl, type: m.type });
+            const variants = (m.video_info?.variants || [])
+                .filter(v => v.content_type === 'video/mp4' && safeVideoUrl(v.url))
+                .sort((a, b) => (a.bitrate || 0) - (b.bitrate || 0));
+            media.push({ url: mUrl, type: m.type, video_url: variants[0]?.url || '', duration_ms: m.video_info?.duration_millis || 0 });
         }
     });
 
@@ -1848,14 +1918,33 @@ function parseSingleTweet(tw) {
 }
 
 function feedToolbar() {
-    return '<div style="padding:8px 16px; border-bottom:1px solid var(--border); text-align:right;"><button type="button" class="btn btn-secondary" onclick="refreshFeed()">Refresh</button></div>';
+    return '<div class="feed-toolbar"><span id="feedProgress" class="feed-progress" role="status" aria-live="polite"></span><button id="feedRefreshButton" type="button" class="btn btn-secondary" onclick="refreshFeed()">Refresh</button></div>';
+}
+
+function setFeedProgress(loading, message, error = false) {
+    const button = document.getElementById('feedRefreshButton');
+    const progress = document.getElementById('feedProgress');
+    if (button) {
+        button.disabled = loading;
+        button.innerHTML = loading ? '<span class="inline-spinner">Refreshing</span>' : 'Refresh';
+    }
+    if (progress) {
+        progress.textContent = message || '';
+        progress.classList.toggle('error', error);
+    }
 }
 
 function refreshFeed() {
     if (currentView !== 'feed' || currentTab === 'cache') return;
-    viewGeneration++;
-    cursors[currentTab] = null;
-    loadFeed(currentTab, true);
+    if (isFetching && isFetching.startsWith(currentTab + ':' + viewGeneration + ':')) {
+        if (isFetching.endsWith(':true')) setFeedProgress(false, 'Loading more posts. Refresh again shortly.');
+        return;
+    }
+    if (document.getElementById('feedContainer')) {
+        fetchFeedData(currentTab, false);
+    } else {
+        loadFeed(currentTab, true);
+    }
 }
 
 function loadFeed(feedType, forceRefresh = false) {
@@ -1907,6 +1996,7 @@ function loadFeed(feedType, forceRefresh = false) {
     }
 
     if (!hasCached) {
+        currentTweetsList = [];
         showStatus('', false);
         container.innerHTML = '<div class="spinner">Loading...</div>';
     } else if (!forceRefresh) {
@@ -1917,15 +2007,15 @@ function loadFeed(feedType, forceRefresh = false) {
         }
     }
 
-    if (hasCached) showStatus('Refreshing in background...', false, 4000);
     fetchFeedData(feedType, false);
 }
 
 function fetchFeedData(feedType, isPaging) {
     const generation = viewGeneration;
     const requestKey = feedType + ':' + generation + ':' + isPaging;
-    if (isFetching === requestKey) return;
+    if (isFetching && isFetching.startsWith(feedType + ':' + generation + ':')) return;
     isFetching = requestKey;
+    if (!isPaging) setFeedProgress(true, 'Checking for new posts…');
 
     const cfg = TIMELINE_CONFIG[feedType];
     if (!cfg) {
@@ -1939,8 +2029,8 @@ function fetchFeedData(feedType, isPaging) {
     let url = `https://x.com/i/api/graphql/${cfg.queryId}/${cfg.op}?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
 
     performAsyncGet(url, (resStr) => {
-        if (isFetching === requestKey) isFetching = false;
         if (generation !== viewGeneration || currentView !== 'feed' || currentTab !== feedType) return;
+        let fallbackPending = false;
         try {
             let parsed = parseTwitterGraphql(resStr);
 
@@ -1948,16 +2038,20 @@ function fetchFeedData(feedType, isPaging) {
 
             if (parsed.error) {
                 if (cfg.fallbackQueryId && isQueryIdFailure(parsed)) {
+                    fallbackPending = true;
                     let fallbackUrl = `https://x.com/i/api/graphql/${cfg.fallbackQueryId}/${cfg.op}?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
                     performAsyncGet(fallbackUrl, (fbStr) => {
+                        if (isFetching === requestKey) isFetching = false;
                         if (generation !== viewGeneration || currentView !== 'feed' || currentTab !== feedType) return;
-                        let fbParsed = parseTwitterGraphql(fbStr);
-                        if (fbParsed.tweets && fbParsed.tweets.length > 0) {
-                            applyFeedTweets(feedType, fbParsed, isPaging);
-                        } else if (feedType === 'foryou') {
-                            displayFeedError(feedType, fbParsed.error ? fbParsed : parsed, isPaging);
-                        } else {
-                            displayFeedError(feedType, fbParsed, isPaging);
+                        try {
+                            let fbParsed = parseTwitterGraphql(fbStr);
+                            if (fbParsed.tweets && fbParsed.tweets.length > 0) {
+                                applyFeedTweets(feedType, fbParsed, isPaging);
+                            } else {
+                                displayFeedError(feedType, fbParsed.error ? fbParsed : parsed, isPaging);
+                            }
+                        } catch (error) {
+                            displayFeedError(feedType, { error: error.message || 'Could not read feed response' }, isPaging);
                         }
                     });
                     return;
@@ -1971,7 +2065,7 @@ function fetchFeedData(feedType, isPaging) {
             console.error("fetchFeedData error:", err);
             displayFeedError(feedType, { error: err.message || 'Could not read feed response' }, isPaging);
         } finally {
-            if (isFetching === requestKey) isFetching = false;
+            if (isFetching === requestKey && !fallbackPending) isFetching = false;
         }
     });
 }
@@ -1979,8 +2073,11 @@ function fetchFeedData(feedType, isPaging) {
 function applyFeedTweets(feedType, parsed, isPaging) {
     const container = document.getElementById('mainContent');
     if (parsed.tweets.length === 0 && !isPaging) {
-        showStatus('', false);
-        container.innerHTML = '<div class="card"><p class="card-desc">No tweets found.</p></div>';
+        if (currentTweetsList.length) {
+            setFeedProgress(false, 'No new posts returned. Tap Refresh to retry.', true);
+        } else {
+            container.innerHTML = feedToolbar() + '<div class="card"><p class="card-desc">No posts found. Tap Refresh to retry.</p></div>';
+        }
         return;
     }
 
@@ -1995,6 +2092,7 @@ function applyFeedTweets(feedType, parsed, isPaging) {
         if (feedDiv) {
             feedDiv.insertAdjacentHTML('beforeend', freshTweets.map(renderTweetHtml).join(''));
         }
+        setFeedProgress(false, '');
         showStatus('', false);
     } else {
         currentTweetsList = parsed.tweets;
@@ -2007,7 +2105,7 @@ function applyFeedTweets(feedType, parsed, isPaging) {
             localStorage.setItem('feed_updated_' + feedType, String(Date.now()));
         }
         container.innerHTML = feedToolbar() + '<div id="feedContainer">' + parsed.tweets.map(renderTweetHtml).join('') + '</div>';
-        showStatus('Feed updated', false, 1500);
+        setFeedProgress(false, 'Updated just now');
     }
 
     renderLoadMoreButton(feedType);
@@ -2019,15 +2117,17 @@ function displayFeedError(feedType, parsed, isPaging) {
     if (isPaging) {
         const btn = document.querySelector('#loadMoreBox button');
         if (btn) { btn.disabled = false; btn.textContent = 'Retry Load More'; }
+        setFeedProgress(false, '');
         showStatus(parsed.error || 'Could not load more tweets', true, 5000);
-    } else if (cachedFeed && !isPaging) {
-        showStatus('Offline: Showing cached tweets', false, 3000);
+    } else if (cachedFeed && document.getElementById('feedContainer')) {
+        setFeedProgress(false, 'Refresh failed. Showing saved posts. Tap Refresh to retry.', true);
     } else {
         showStatus('', false);
         container.innerHTML = `
         <div class="card">
             <div class="card-title" style="color:var(--red);">Error loading feed</div>
             <p class="card-desc">${escapeHtml(parsed.error || 'Network error')}</p>
+            <button type="button" class="btn btn-secondary" onclick="refreshFeed()">Retry Refresh</button>
             <a href="javascript:nav('settings')" class="btn btn-secondary">Check Settings &rarr;</a>
         </div>`;
     }
@@ -2050,6 +2150,7 @@ function renderLoadMoreButton(feedType) {
 }
 
 function loadMoreTweets(feedType) {
+    if (isFetching && isFetching.startsWith(feedType + ':' + viewGeneration + ':')) return;
     const btn = document.querySelector('#loadMoreBox button');
     if (btn) {
         btn.disabled = true;

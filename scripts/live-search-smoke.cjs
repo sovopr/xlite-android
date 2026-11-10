@@ -16,7 +16,8 @@ const context = { Buffer, TextEncoder, TextDecoder, Uint8Array, Math, Date, cons
 vm.createContext(context);
 scripts.forEach(script => vm.runInContext(script, context));
 
-const queryId = appHtml.match(/const queryIds = \['([^']+)'/)[1];
+const queryId = appHtml.match(/const queryIds = \[state\.queryId, '([^']+)'/)?.[1];
+if (!queryId) throw new Error('Search query ID was not found in app source.');
 const bearer = bridgeSource.match(/const val BEARER_TOKEN = "([^"]+)"/)[1];
 const userAgent = bridgeSource.match(/const val USER_AGENT = "([^"]+)"/)[1];
 const baseHeaders = {

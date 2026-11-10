@@ -27,6 +27,11 @@ jobs:
       - name: Make Gradle Wrapper Executable
         run: chmod +x gradlew
 
+      - name: Check web interface behavior
+        run: |
+          node scripts/feed-media.test.cjs
+          node scripts/search-pagination.test.cjs
+
       - name: Build Release APK
         run: ./gradlew assembleRelease --stacktrace
 
