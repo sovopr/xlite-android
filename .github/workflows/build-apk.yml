@@ -3,6 +3,7 @@ name: Build Android APK
 on:
   push:
     branches: [ main, master ]
+    tags: [ 'v*' ]
   workflow_dispatch:
 
 permissions:
@@ -42,15 +43,12 @@ jobs:
 
       - name: Create GitHub Release & Upload APK
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        if: startsWith(github.ref, 'refs/tags/')
         with:
-          tag_name: v1.0.4
-          name: "𝕏 Lite v1.0.4 (For You Feed Fix & Complete Modern Features Schema)"
+          tag_name: ${{ github.ref_name }}
+          name: "𝕏 Lite ${{ github.ref_name }}"
           body: |
-            ### 𝕏 Lite Android APK v1.0.4 (Hotfix Release)
-            - **Fixed For You Feed**: Configured modern query ID `KmJCeZ__ef1fNos7tKN_fg` with complete GraphQL features schema (40+ flags) and fallback chain.
-            - **Graceful Fallback**: Automatically cascades from primary to fallback queries, ensuring no red validation errors.
-            - **Version Display**: Explicit `v1.0.4` build `2026.11.10.5` in Settings.
+            Android APK for ${{ github.ref_name }}.
           files: ./xlite-fup-release.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

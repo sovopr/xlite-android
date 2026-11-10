@@ -365,6 +365,13 @@ let currentTweetsList = [];
 let allTweetsMap = {};
 let isFetching = false;
 let pendingCallbacks = {};
+const APP_VERSION = '1.0.5';
+const APP_BUILD = '2026.11.10.6';
+const FEED_REFRESH_MS = 5 * 60 * 1000;
+const FEED_PAGE_SIZE = 6;
+let currentView = 'feed';
+let viewGeneration = 0;
+let lastSearchQuery = '';
 
 const TIMELINE_CONFIG = {
     following: {
@@ -372,7 +379,7 @@ const TIMELINE_CONFIG = {
         op: 'HomeLatestTimeline',
         buildVariables: (count, cursor) => {
             let v = {
-                count: count || 12,
+                count: count || FEED_PAGE_SIZE,
                 includePromotedContent: false,
                 latestControlAvailable: true,
                 requestContext: 'launch'
@@ -387,7 +394,7 @@ const TIMELINE_CONFIG = {
         op: 'HomeTimeline',
         buildVariables: (count, cursor) => {
             let v = {
-                count: count || 12,
+                count: count || FEED_PAGE_SIZE,
                 includePromotedContent: false,
                 requestContext: 'launch',
                 seenTweetIds: [],
@@ -469,10 +476,12 @@ function init() {
 }
 
 // Global callback dispatcher for native Android async requests
-window.__onAsyncFinish = function(callbackId) {
+window.__onAsyncFinish = function(callbackId, directResult) {
     if (pendingCallbacks[callbackId]) {
         let resStr = '';
-        if (window.AndroidBridge && AndroidBridge.getCache) {
+        if (directResult !== undefined) {
+            resStr = directResult;
+        } else if (window.AndroidBridge && AndroidBridge.getCache) {
             resStr = AndroidBridge.getCache('temp_res_' + callbackId);
             AndroidBridge.saveCache('temp_res_' + callbackId, '');
         }
@@ -501,8 +510,8 @@ function performAsyncGet(url, callback) {
         // Fallback to native browser fetch
         fetch(url)
             .then(r => r.text())
-            .then(txt => callback(txt))
-            .catch(err => callback(JSON.stringify({ error: true, message: err.message })));
+            .then(txt => window.__onAsyncFinish(cbId, txt))
+            .catch(err => window.__onAsyncFinish(cbId, JSON.stringify({ error: true, message: err.message })));
     }
 }
 
@@ -515,12 +524,12 @@ function showStatus(text, isError, autoHideMs) {
         return;
     }
     bar.className = 'status-bar' + (isError ? ' error' : '');
-    bar.innerHTML = text;
+    bar.textContent = text;
     bar.style.display = 'flex';
 
     if (autoHideMs) {
         setTimeout(() => {
-            if (bar.innerHTML === text) {
+            if (bar.textContent === text) {
                 bar.style.display = 'none';
                 bar.innerHTML = '';
             }
@@ -529,6 +538,8 @@ function showStatus(text, isError, autoHideMs) {
 }
 
 function nav(view) {
+    currentView = view;
+    viewGeneration++;
     document.querySelectorAll('.bottom-item').forEach((el, idx) => {
         el.classList.toggle('active', ['feed', 'search', 'post', 'settings'][idx] === view);
     });
@@ -547,6 +558,8 @@ function nav(view) {
 }
 
 function switchFeed(tab) {
+    currentView = 'feed';
+    viewGeneration++;
     currentTab = tab;
     currentFeedOrigin = tab;
     try { localStorage.setItem('last_active_tab', tab); } catch(e){}
@@ -558,20 +571,31 @@ function switchFeed(tab) {
 
 function escapeHtml(text) {
     if (!text) return '';
-    return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 function linkify(text) {
-    let s = escapeHtml(text);
-    s = s.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" onclick="event.stopPropagation()">$1</a>');
-    s = s.replace(/@([a-zA-Z0-9_]+)/g, '<a href="javascript:searchTag(\'from:$1\')" onclick="event.stopPropagation()">@$1</a>');
-    s = s.replace(/#([a-zA-Z0-9_]+)/g, '<a href="javascript:searchTag(\'#$1\')" onclick="event.stopPropagation()">#$1</a>');
-    return s;
+    const source = String(text || '');
+    const matcher = /https?:\/\/[^\s<>"']+|@[a-zA-Z0-9_]+|#[a-zA-Z0-9_]+/g;
+    let result = '';
+    let offset = 0;
+    for (const match of source.matchAll(matcher)) {
+        result += escapeHtml(source.slice(offset, match.index));
+        const token = match[0];
+        if (token.startsWith('http')) {
+            result += `<a href="${escapeHtml(token)}" onclick="event.stopPropagation()">${escapeHtml(token)}</a>`;
+        } else {
+            const query = token[0] === '@' ? 'from:' + token.slice(1) : token;
+            result += `<a href="javascript:searchTag('${query}')" onclick="event.stopPropagation()">${escapeHtml(token)}</a>`;
+        }
+        offset = match.index + token.length;
+    }
+    return result + escapeHtml(source.slice(offset));
 }
 
 function getBookmarks() {
     try {
-        let b = AndroidBridge ? AndroidBridge.getCache('bookmarks') : localStorage.getItem('bookmarks');
+        let b = window.AndroidBridge ? AndroidBridge.getCache('bookmarks') : localStorage.getItem('bookmarks');
         return b ? JSON.parse(b) : [];
     } catch(e) { return []; }
 }
@@ -589,7 +613,7 @@ function toggleBookmark(twId) {
         if (el) el.innerHTML = '☆ Save';
         showStatus('Removed from offline saved', false, 2000);
     } else {
-        let tweetObj = currentTweetsList.find(t => t.id === twId);
+        let tweetObj = allTweetsMap[twId] || currentTweetsList.find(t => t.id === twId);
         if (tweetObj) {
             list.unshift(tweetObj);
             if (el) el.innerHTML = '★ Saved';
@@ -685,7 +709,7 @@ function renderTweetHtml(tw) {
                 mediaHtml += `
                 <div style="margin-top:6px;">
                     <button type="button" class="btn btn-secondary btn-block" onclick="loadThumbImg(this, '${escapeHtml(m.url)}', '${imgId}')" style="font-size:13px; padding:8px 14px;">
-                        Load Image (~3.5 KB)
+                        Load small preview
                     </button>
                 </div>`;
             }
@@ -775,11 +799,11 @@ function parseTwitterGraphql(jsonStr) {
         return { tweets: [], error: 'JSON parse error' };
     }
 
-    if (data.errors && data.errors.length > 0) {
-        return { tweets: [], error: data.errors[0]?.message || 'GraphQL Error' };
+    if (data.errors && data.errors.length > 0 && !data.data) {
+        return { tweets: [], error: data.errors[0]?.message || 'GraphQL Error', status: data.status };
     }
     if (data.error && !data.statuses && !data.globalObjects) {
-        return { tweets: [], error: data.message || 'Error from Twitter' };
+        return { tweets: [], error: data.message || 'Error from Twitter', status: data.status };
     }
 
     // Direct REST v1.1 search format: { statuses: [...] }
@@ -846,7 +870,11 @@ function parseTwitterGraphql(jsonStr) {
         });
     });
 
-    return { tweets, nextCursor };
+    return { tweets, nextCursor, error: tweets.length ? null : (data.errors?.[0]?.message || null), status: data.status };
+}
+
+function isQueryIdFailure(result) {
+    return result.status === 404 || /GRAPHQL_VALIDATION_FAILED|unknown query|query.*not found/i.test(result.error || '');
 }
 
 function parseSingleTweet(tw) {
@@ -912,13 +940,24 @@ function parseSingleTweet(tw) {
     return parsed;
 }
 
-function loadFeed(feedType) {
+function feedToolbar() {
+    return '<div style="padding:8px 16px; border-bottom:1px solid var(--border); text-align:right;"><button type="button" class="btn btn-secondary" onclick="refreshFeed()">Refresh</button></div>';
+}
+
+function refreshFeed() {
+    if (currentView !== 'feed' || currentTab === 'cache') return;
+    viewGeneration++;
+    cursors[currentTab] = null;
+    loadFeed(currentTab, true);
+}
+
+function loadFeed(feedType, forceRefresh = false) {
     const container = document.getElementById('mainContent');
 
     if (feedType === 'cache') {
         showStatus('Viewing offline tweets', false, 0);
         let bookmarks = getBookmarks();
-        let cached = AndroidBridge ? AndroidBridge.getCache('feed_cache') : '';
+        let cached = window.AndroidBridge ? AndroidBridge.getCache('feed_cache') : '';
         let cachedList = [];
         try { if (cached) cachedList = JSON.parse(cached); } catch(e){}
 
@@ -953,9 +992,9 @@ function loadFeed(feedType) {
             if (list && list.length > 0) {
                 currentTweetsList = list;
                 list.forEach(t => { if (t && t.id) allTweetsMap[t.id] = t; });
-                container.innerHTML = '<div id="feedContainer">' + list.map(renderTweetHtml).join('') + '</div>';
+                container.innerHTML = feedToolbar() + '<div id="feedContainer">' + list.map(renderTweetHtml).join('') + '</div>';
                 hasCached = true;
-                showStatus('Refreshing in background...', false, 4000);
+                renderLoadMoreButton(feedType);
             }
         } catch (e) {}
     }
@@ -963,50 +1002,57 @@ function loadFeed(feedType) {
     if (!hasCached) {
         showStatus('', false);
         container.innerHTML = '<div class="spinner">Loading...</div>';
+    } else if (!forceRefresh) {
+        const lastUpdated = Number(window.AndroidBridge ? AndroidBridge.getCache('feed_updated_' + feedType) : localStorage.getItem('feed_updated_' + feedType));
+        if (lastUpdated && Date.now() - lastUpdated < FEED_REFRESH_MS) {
+            showStatus('Showing recent cached tweets', false, 2500);
+            return;
+        }
     }
 
+    if (hasCached) showStatus('Refreshing in background...', false, 4000);
     fetchFeedData(feedType, false);
 }
 
 function fetchFeedData(feedType, isPaging) {
-    if (isFetching) return;
-    isFetching = true;
+    const generation = viewGeneration;
+    const requestKey = feedType + ':' + generation + ':' + isPaging;
+    if (isFetching === requestKey) return;
+    isFetching = requestKey;
 
     const cfg = TIMELINE_CONFIG[feedType];
     if (!cfg) {
-        isFetching = false;
+        if (isFetching === requestKey) isFetching = false;
         return;
     }
 
     let cursor = isPaging ? cursors[feedType] : null;
-    let variables = cfg.buildVariables(12, cursor);
+    let variables = cfg.buildVariables(FEED_PAGE_SIZE, cursor);
 
     let url = `https://x.com/i/api/graphql/${cfg.queryId}/${cfg.op}?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
 
     performAsyncGet(url, (resStr) => {
-        isFetching = false;
+        if (isFetching === requestKey) isFetching = false;
+        if (generation !== viewGeneration || currentView !== 'feed' || currentTab !== feedType) return;
         try {
             let parsed = parseTwitterGraphql(resStr);
 
             const container = document.getElementById('mainContent');
 
             if (parsed.error) {
-                if (cfg.fallbackQueryId) {
+                if (cfg.fallbackQueryId && isQueryIdFailure(parsed)) {
                     let fallbackUrl = `https://x.com/i/api/graphql/${cfg.fallbackQueryId}/${cfg.op}?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
                     performAsyncGet(fallbackUrl, (fbStr) => {
+                        if (generation !== viewGeneration || currentView !== 'feed' || currentTab !== feedType) return;
                         let fbParsed = parseTwitterGraphql(fbStr);
                         if (fbParsed.tweets && fbParsed.tweets.length > 0) {
                             applyFeedTweets(feedType, fbParsed, isPaging);
                         } else if (feedType === 'foryou') {
-                            // Fallback to following feed so user never gets a broken screen
-                            fetchFeedData('following', isPaging);
+                            displayFeedError(feedType, fbParsed.error ? fbParsed : parsed, isPaging);
                         } else {
                             displayFeedError(feedType, fbParsed, isPaging);
                         }
                     });
-                    return;
-                } else if (feedType === 'foryou') {
-                    fetchFeedData('following', isPaging);
                     return;
                 }
                 displayFeedError(feedType, parsed, isPaging);
@@ -1016,9 +1062,9 @@ function fetchFeedData(feedType, isPaging) {
             applyFeedTweets(feedType, parsed, isPaging);
         } catch(err) {
             console.error("fetchFeedData error:", err);
-            showStatus('', false);
+            displayFeedError(feedType, { error: err.message || 'Could not read feed response' }, isPaging);
         } finally {
-            isFetching = false;
+            if (isFetching === requestKey) isFetching = false;
         }
     });
 }
@@ -1034,11 +1080,13 @@ function applyFeedTweets(feedType, parsed, isPaging) {
     cursors[feedType] = parsed.nextCursor;
 
     if (isPaging) {
-        currentTweetsList.push(...parsed.tweets);
+        const existingIds = new Set(currentTweetsList.map(t => t.id));
+        const freshTweets = parsed.tweets.filter(t => !existingIds.has(t.id));
+        currentTweetsList.push(...freshTweets);
         parsed.tweets.forEach(t => { if (t && t.id) allTweetsMap[t.id] = t; });
         let feedDiv = document.getElementById('feedContainer');
         if (feedDiv) {
-            feedDiv.insertAdjacentHTML('beforeend', parsed.tweets.map(renderTweetHtml).join(''));
+            feedDiv.insertAdjacentHTML('beforeend', freshTweets.map(renderTweetHtml).join(''));
         }
         showStatus('', false);
     } else {
@@ -1047,8 +1095,11 @@ function applyFeedTweets(feedType, parsed, isPaging) {
         if (window.AndroidBridge) {
             AndroidBridge.saveCache('feed_' + feedType, JSON.stringify(parsed.tweets));
             AndroidBridge.saveCache('feed_cache', JSON.stringify(parsed.tweets));
+            AndroidBridge.saveCache('feed_updated_' + feedType, String(Date.now()));
+        } else {
+            localStorage.setItem('feed_updated_' + feedType, String(Date.now()));
         }
-        container.innerHTML = '<div id="feedContainer">' + parsed.tweets.map(renderTweetHtml).join('') + '</div>';
+        container.innerHTML = feedToolbar() + '<div id="feedContainer">' + parsed.tweets.map(renderTweetHtml).join('') + '</div>';
         showStatus('Feed updated', false, 1500);
     }
 
@@ -1057,8 +1108,12 @@ function applyFeedTweets(feedType, parsed, isPaging) {
 
 function displayFeedError(feedType, parsed, isPaging) {
     const container = document.getElementById('mainContent');
-    let cachedFeed = AndroidBridge ? AndroidBridge.getCache('feed_' + feedType) : '';
-    if (cachedFeed && !isPaging) {
+    let cachedFeed = window.AndroidBridge ? AndroidBridge.getCache('feed_' + feedType) : '';
+    if (isPaging) {
+        const btn = document.querySelector('#loadMoreBox button');
+        if (btn) { btn.disabled = false; btn.textContent = 'Retry Load More'; }
+        showStatus(parsed.error || 'Could not load more tweets', true, 5000);
+    } else if (cachedFeed && !isPaging) {
         showStatus('Offline: Showing cached tweets', false, 3000);
     } else {
         showStatus('', false);
@@ -1075,7 +1130,7 @@ function renderLoadMoreButton(feedType) {
     let oldBtn = document.getElementById('loadMoreBox');
     if (oldBtn) oldBtn.remove();
 
-    if (cursors[feedType]) {
+    if (cursors[feedType] && currentView === 'feed' && currentTab === feedType) {
         const loadMoreHtml = `
         <div id="loadMoreBox" class="load-more-box">
             <button type="button" class="btn btn-secondary btn-block" onclick="loadMoreTweets('${feedType}')" style="padding:10px;">
@@ -1098,12 +1153,15 @@ function loadMoreTweets(feedType) {
 
 // Conversation / Thread View
 function viewThread(tweetId) {
+    currentView = 'thread';
+    viewGeneration++;
     currentFeedOrigin = currentTab;
     history.pushState({ view: 'thread', id: tweetId, originTab: currentTab }, '', '#thread-' + tweetId);
     renderThreadView(tweetId);
 }
 
 function renderThreadView(tweetId) {
+    const generation = viewGeneration;
     const tabNav = document.getElementById('tabNav');
     if (tabNav) tabNav.style.display = 'none';
 
@@ -1145,10 +1203,12 @@ function renderThreadView(tweetId) {
     let url = `https://x.com/i/api/graphql/qpemjmVMoTWDvcRT43JIVQ/TweetDetail?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
 
     performAsyncGet(url, (resStr) => {
+        if (generation !== viewGeneration || currentView !== 'thread') return;
         let parsed = parseTwitterGraphql(resStr);
         if (parsed.error && (!parsed.tweets || !parsed.tweets.length)) {
             let fbUrl = `https://x.com/i/api/graphql/dQDdKtt882nl-Km98FJGSQ/TweetDetail?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
             performAsyncGet(fbUrl, (fbStr) => {
+                if (generation !== viewGeneration || currentView !== 'thread') return;
                 let fbParsed = parseTwitterGraphql(fbStr);
                 renderThreadData(tweetId, focal, fbParsed);
             });
@@ -1179,7 +1239,7 @@ function renderThreadData(tweetId, focal, parsed) {
 
     if (replies.length > 0) {
         repContainer.innerHTML = '<div style="padding:12px 16px; font-size:14px; font-weight:700; color:var(--text-muted); border-bottom:1px solid var(--border);">Replies (' + replies.length + ')</div>' + replies.map(renderTweetHtml).join('');
-    } else if (parsed.error && !focal) {
+    } else if (parsed.error) {
         repContainer.innerHTML = `<div class="card"><div class="card-title" style="color:var(--red);">Error</div><p class="card-desc">${escapeHtml(parsed.error)}</p></div>`;
     } else {
         repContainer.innerHTML = '<div style="padding:28px 16px; text-align:center; color:var(--text-muted); font-size:14px;">No replies yet</div>';
@@ -1195,6 +1255,8 @@ function goBackToFeed() {
 }
 
 function restoreFeedView(targetTab) {
+    currentView = 'feed';
+    viewGeneration++;
     currentTab = targetTab || currentTab || 'following';
     const tabNav = document.getElementById('tabNav');
     if (tabNav) tabNav.style.display = 'flex';
@@ -1210,6 +1272,8 @@ function restoreFeedView(targetTab) {
 // History stack back navigation
 window.onpopstate = function(e) {
     if (e.state && e.state.view === 'thread') {
+        currentView = 'thread';
+        viewGeneration++;
         renderThreadView(e.state.id);
     } else {
         let origin = (e.state && e.state.originTab) ? e.state.originTab : currentFeedOrigin || currentTab;
@@ -1222,8 +1286,8 @@ function renderSearch() {
     container.innerHTML = `
     <div style="padding:12px 16px; border-bottom:1px solid var(--border);">
         <form onsubmit="executeSearch(event)" style="display:flex; gap:8px;">
-            <input type="text" id="searchInput" class="form-input" placeholder="Search keywords, @users, #hashtags" style="margin-bottom:0;" required>
-            <button type="submit" class="btn">Search</button>
+            <input type="search" id="searchInput" class="form-input" placeholder="Search keywords, @users, #hashtags" style="margin-bottom:0;" value="${escapeHtml(lastSearchQuery)}" required>
+            <button type="submit" class="btn" id="searchBtn">Search</button>
         </form>
     </div>
     <div id="searchResults"></div>`;
@@ -1244,59 +1308,50 @@ function executeSearch(e) {
     if (e && e.preventDefault) e.preventDefault();
     const q = document.getElementById('searchInput').value.trim();
     if (!q) return;
+    lastSearchQuery = q;
+    const generation = ++viewGeneration;
 
     const resDiv = document.getElementById('searchResults');
     resDiv.innerHTML = '<div class="spinner">Searching...</div>';
+    const btn = document.getElementById('searchBtn');
+    if (btn) btn.disabled = true;
 
     let variables = {
         rawQuery: q,
-        count: 20,
+        count: 8,
         querySource: 'typed_query',
         product: 'Top'
     };
 
-    // Tier 1: Modern SearchTimeline queryId
-    let url1 = `https://x.com/i/api/graphql/flaR-PUMshxFWZWPNpq4zA/SearchTimeline?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
-
-    performAsyncGet(url1, (res1) => {
-        let p1 = parseTwitterGraphql(res1);
-        if (p1.tweets && p1.tweets.length > 0) {
-            renderSearchResults(q, p1.tweets, resDiv);
+    // Query IDs rotate. Try recent known IDs, then offer the official search page.
+    const queryIds = ['GcXk9vN_d1jUfHNqLacXQA', 'VhUd6vHVmLBcw0uX-6jMLA', 'flaR-PUMshxFWZWPNpq4zA'];
+    let lastError = '';
+    function tryQuery(index) {
+        if (generation !== viewGeneration || currentView !== 'search') return;
+        if (index >= queryIds.length) {
+            if (btn) btn.disabled = false;
+            resDiv.innerHTML = `<div class="card"><div class="card-title" style="color:var(--red);">Search unavailable</div><p class="card-desc">${escapeHtml(lastError || 'X changed its search endpoint. Please try again later.')}</p><button type="button" class="btn btn-secondary" onclick="openSearchInX()">Open X search (uses more data)</button></div>`;
             return;
         }
-
-        // Tier 2 Fallback: 1BP5aKg8NvTNvRCyyCyq8g
-        let url2 = `https://x.com/i/api/graphql/1BP5aKg8NvTNvRCyyCyq8g/SearchTimeline?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
-        performAsyncGet(url2, (res2) => {
-            let p2 = parseTwitterGraphql(res2);
-            if (p2.tweets && p2.tweets.length > 0) {
-                renderSearchResults(q, p2.tweets, resDiv);
+        const url = `https://x.com/i/api/graphql/${queryIds[index]}/SearchTimeline?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
+        performAsyncGet(url, (response) => {
+            if (generation !== viewGeneration || currentView !== 'search') return;
+            const parsed = parseTwitterGraphql(response);
+            if (parsed.error) {
+                lastError = parsed.error;
+                if (isQueryIdFailure(parsed)) tryQuery(index + 1);
+                else tryQuery(queryIds.length);
                 return;
             }
-
-            // Tier 3 Fallback: vLHjqbDv7TPFMBkIIO1nOA
-            let url3 = `https://x.com/i/api/graphql/vLHjqbDv7TPFMBkIIO1nOA/SearchTimeline?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
-            performAsyncGet(url3, (res3) => {
-                let p3 = parseTwitterGraphql(res3);
-                if (p3.tweets && p3.tweets.length > 0) {
-                    renderSearchResults(q, p3.tweets, resDiv);
-                    return;
-                }
-
-                // Tier 4 Fallback: REST API search
-                let restUrl = `https://api.twitter.com/1.1/search/tweets.json?q=${encodeURIComponent(q)}&count=20&result_type=mixed`;
-                performAsyncGet(restUrl, (restRes) => {
-                    let pRest = parseTwitterGraphql(restRes);
-                    if (pRest.tweets && pRest.tweets.length > 0) {
-                        renderSearchResults(q, pRest.tweets, resDiv);
-                    } else {
-                        let err = p1.error || p2.error || p3.error || pRest.error || 'No results found.';
-                        resDiv.innerHTML = `<div class="card"><div class="card-title" style="color:var(--red);">Search Error</div><p class="card-desc">${escapeHtml(err)}</p></div>`;
-                    }
-                });
-            });
+            if (btn) btn.disabled = false;
+            renderSearchResults(q, parsed.tweets, resDiv);
         });
-    });
+    }
+    tryQuery(0);
+}
+
+function openSearchInX() {
+    window.location.href = 'https://x.com/search?q=' + encodeURIComponent(lastSearchQuery);
 }
 
 function postReply(e, replyToId) {
@@ -1438,7 +1493,7 @@ function renderSettings() {
     const container = document.getElementById('mainContent');
     let cookies = { auth_token: '', ct0: '', image_mode: 'tap' };
     let isLive = false;
-    let versionInfo = { version: "1.0.4", build: "2026.11.10.5", isLive: false };
+    let versionInfo = { version: APP_VERSION, build: APP_BUILD, isLive: false };
 
     if (window.AndroidBridge) {
         try { cookies = JSON.parse(AndroidBridge.getCookies()); } catch(e){}
@@ -1455,12 +1510,12 @@ function renderSettings() {
         <div class="card-title">Version & System Info</div>
         <div style="font-size:14px; line-height:1.8; margin-bottom:12px;">
             <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding:6px 0;">
-                <span style="color:var(--text-muted);">App Version</span>
-                <span style="font-weight:700; color:var(--text);">v${escapeHtml(versionInfo.version || '1.0.4')}</span>
+                <span style="color:var(--text-muted);">Running App Version</span>
+                <span style="font-weight:700; color:var(--text);">v${APP_VERSION}</span>
             </div>
             <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding:6px 0;">
-                <span style="color:var(--text-muted);">Build</span>
-                <span style="color:var(--text);">${escapeHtml(versionInfo.build || '2026.11.10.5')}</span>
+                <span style="color:var(--text-muted);">Installed APK</span>
+                <span style="color:var(--text);">v${escapeHtml(versionInfo.version || 'unknown')} (${escapeHtml(versionInfo.build || '?')})</span>
             </div>
             <div style="display:flex; justify-content:space-between; padding:6px 0;">
                 <span style="color:var(--text-muted);">Runtime Source</span>
@@ -1480,7 +1535,7 @@ function renderSettings() {
             Check for Updates
         </button>
         <div id="updateStatusText" style="margin-top:10px; font-size:13px; color:var(--text-muted); text-align:center;">
-            ${isLive ? 'Currently running live OTA version (v1.0.4)' : 'Currently running bundled APK version (v1.0.4)'}
+            Currently running ${isLive ? 'live OTA' : 'bundled'} version (v${APP_VERSION})
         </div>
         ${isLive ? `
         <button type="button" class="btn btn-secondary btn-block" style="margin-top:10px; font-size:13px;" onclick="resetToFactoryAsset()">
@@ -1495,20 +1550,20 @@ function renderSettings() {
         </p>
         <form onsubmit="saveSettings(event)">
             <label style="font-size:13px; color:var(--text-muted); display:block; margin-bottom:4px;">auth_token</label>
-            <input type="text" id="cfgAuth" value="${escapeHtml(cookies.auth_token)}" class="form-input" placeholder="Paste auth_token" required>
+            <input type="password" id="cfgAuth" value="${escapeHtml(cookies.auth_token)}" class="form-input" placeholder="Paste auth_token" autocomplete="off" required>
 
             <label style="font-size:13px; color:var(--text-muted); display:block; margin-bottom:4px;">ct0 (csrf token)</label>
-            <input type="text" id="cfgCt0" value="${escapeHtml(cookies.ct0)}" class="form-input" placeholder="Paste ct0" required>
+            <input type="password" id="cfgCt0" value="${escapeHtml(cookies.ct0)}" class="form-input" placeholder="Paste ct0" autocomplete="off" required>
 
             <div class="card-title" style="font-size:15px; margin: 16px 0 6px;">Image Mode</div>
             <div style="font-size:14px; line-height:2; margin-bottom:16px;">
                 <label style="display:block;">
                     <input type="radio" name="imgMode" value="tap" ${cookies.image_mode === 'tap' ? 'checked' : ''}>
-                    Tap to load (~3.5 KB)
+                    Tap to load small previews (recommended for slow data)
                 </label>
                 <label style="display:block;">
                     <input type="radio" name="imgMode" value="auto" ${cookies.image_mode === 'auto' ? 'checked' : ''}>
-                    Auto-load compressed WebP
+                    Auto-load previews (uses more data)
                 </label>
                 <label style="display:block;">
                     <input type="radio" name="imgMode" value="off" ${cookies.image_mode === 'off' ? 'checked' : ''}>
@@ -1535,6 +1590,10 @@ function saveSettings(e) {
     const mode = document.querySelector('input[name="imgMode"]:checked').value;
 
     if (window.AndroidBridge) {
+        if (auth !== appConfig.auth_token || ct0 !== appConfig.ct0) {
+            AndroidBridge.clearCache();
+            AndroidBridge.saveCache('bookmarks', '[]');
+        }
         AndroidBridge.saveConfig(auth, ct0, mode);
         appConfig = { auth_token: auth, ct0: ct0, image_mode: mode };
         alert("Saved");
@@ -1579,6 +1638,20 @@ function triggerAppUpdate() {
 
 function applyUpdate(newHtml) {
     const statusText = document.getElementById('updateStatusText');
+    const versionMatch = newHtml.match(/const APP_VERSION = '([0-9]+\.[0-9]+\.[0-9]+)'/);
+    if (!versionMatch) {
+        if (statusText) statusText.textContent = 'Update file has no version information.';
+        const btn = document.getElementById('updateBtn');
+        if (btn) btn.disabled = false;
+        return;
+    }
+    const newer = versionMatch[1].split('.').map(Number).some((part, i, parts) => part > Number(APP_VERSION.split('.')[i]) && parts.slice(0, i).every((p, j) => p === Number(APP_VERSION.split('.')[j])));
+    if (!newer) {
+        if (statusText) statusText.textContent = 'Already up to date (v' + APP_VERSION + ').';
+        const btn = document.getElementById('updateBtn');
+        if (btn) btn.disabled = false;
+        return;
+    }
     if (window.AndroidBridge && AndroidBridge.saveLiveHtml) {
         let ok = AndroidBridge.saveLiveHtml(newHtml);
         if (ok) {
@@ -1592,7 +1665,7 @@ function applyUpdate(newHtml) {
             if (updateBtn) updateBtn.disabled = false;
         }
     } else {
-        alert("Please install v1.0.4 APK once to enable in-app updates.");
+        alert("Please install the current APK once to enable in-app updates.");
     }
 }
 

@@ -8,18 +8,18 @@ A clean, standalone, ultra-low-bandwidth native Android client for 𝕏 (Twitter
 
 * **100% On-Phone Compute**: Runs entirely on your Android device — zero external proxy, server, or Mac required.
 * **Clean, Authentic Minimal UI**: Pure `#000000` OLED dark aesthetic matching official 𝕏, free of bloated animations or flashy distractions.
-* **Instant Stale-While-Revalidate**: Feeds load instantaneously (0.01s) from local cache and refresh in the background over tiny ~3.5 KB compressed payloads.
+* **Local feed cache**: Recent feeds open immediately without a network request. The app refreshes a cached feed after five minutes or when you tap Refresh.
 * **Conversation Threads & Replies**: Read full tweet threads and post replies directly with minimal payloads.
 * **In-App Hot Updates (OTA)**: Pull the latest updates directly in Settings without reinstalling APKs.
 * **Direct Twitter GraphQL Engine**: Uses native `OkHttp` with Brotli and Gzip compression to speak directly to Twitter's internal endpoints.
-* **On-Device Smart Image Engine**: Intercepts images and downscales them natively on the phone to **380px WebP (~3.5 KB)**. Photos drop from 2.5 MB to 3.5 KB, loading in under 0.4s over 64 kbps!
+* **Data-saving images**: Photos stay unloaded until tapped by default. A tap requests X's thumbnail variant before recompressing it on the phone; higher quality is optional. Actual bytes and loading time depend on X's response and the cellular link.
 
 ---
 
 ## 📥 Download APK
 
 Grab the latest compiled APK directly from the Releases tab:
-* **[Download `xlite-fup-release.apk` v1.0.2 (4.8 MB)](https://github.com/sovopr/xlite-android/releases/download/v1.0.2/xlite-fup-release.apk)**
+* **[Download the latest `xlite-fup-release.apk`](https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk)**
 
 ---
 

@@ -3,6 +3,8 @@ package com.sovopr.xlite
 import android.content.Context
 import android.content.SharedPreferences
 import android.webkit.JavascriptInterface
+import org.json.JSONObject
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
@@ -20,8 +22,8 @@ class TwitterBridge(private val context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("xlite_prefs", Context.MODE_PRIVATE)
     private val client: OkHttpClient = OkHttpClient.Builder()
         .addInterceptor(BrotliInterceptor)
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
         .followRedirects(true)
         .build()
 
@@ -31,7 +33,8 @@ class TwitterBridge(private val context: Context) {
     }
 
     private fun buildRequest(url: String): Request {
-        val isTwitter = url.contains("twitter.com") || url.contains("x.com")
+        val parsedUrl = url.toHttpUrlOrNull()
+        val isTwitter = parsedUrl?.isHttps == true && parsedUrl.host in setOf("x.com", "api.twitter.com", "twitter.com")
         val builder = Request.Builder().url(url)
         if (isTwitter) {
             val authToken = prefs.getString("auth_token", "") ?: ""
@@ -55,7 +58,7 @@ class TwitterBridge(private val context: Context) {
         val auth = prefs.getString("auth_token", "") ?: ""
         val ct0 = prefs.getString("ct0", "") ?: ""
         val imgMode = prefs.getString("image_mode", "tap") ?: "tap"
-        return """{"auth_token":"$auth","ct0":"$ct0","image_mode":"$imgMode"}"""
+        return JSONObject().put("auth_token", auth).put("ct0", ct0).put("image_mode", imgMode).toString()
     }
 
     @JavascriptInterface
@@ -81,7 +84,7 @@ class TwitterBridge(private val context: Context) {
     fun clearCache() {
         val editor = prefs.edit()
         for (k in prefs.all.keys) {
-            if (k.startsWith("cache_")) {
+            if (k.startsWith("cache_feed_") || k.startsWith("cache_temp_res_")) {
                 editor.remove(k)
             }
         }
@@ -90,6 +93,7 @@ class TwitterBridge(private val context: Context) {
 
     @JavascriptInterface
     fun executeGet(url: String): String {
+        if (!isAllowedGetUrl(url)) return errorPayload("Unsupported request URL")
         val request = buildRequest(url)
         return try {
             client.newCall(request).execute().use { response ->
@@ -97,7 +101,7 @@ class TwitterBridge(private val context: Context) {
                 if (response.isSuccessful) {
                     body
                 } else {
-                    """{"error": true, "status": ${response.code}, "message": ${org.json.JSONObject.quote(body.take(200))}}"""
+                    """{"error": true, "status": ${response.code}, "message": ${JSONObject.quote(body.take(200).ifBlank { "HTTP ${response.code} from X" })}}"""
                 }
             }
         } catch (e: Exception) {
@@ -107,6 +111,11 @@ class TwitterBridge(private val context: Context) {
 
     @JavascriptInterface
     fun executeGetAsync(url: String, callbackId: String) {
+        if (!isAllowedGetUrl(url)) {
+            saveCache("temp_res_$callbackId", errorPayload("Unsupported request URL"))
+            (context as? MainActivity)?.dispatchJsCallback(callbackId)
+            return
+        }
         val request = buildRequest(url)
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
@@ -121,7 +130,7 @@ class TwitterBridge(private val context: Context) {
                     val payload = if (resp.isSuccessful) {
                         body
                     } else {
-                        """{"error": true, "status": ${resp.code}, "message": ${org.json.JSONObject.quote(body.take(200))}}"""
+                        """{"error": true, "status": ${resp.code}, "message": ${JSONObject.quote(body.take(200).ifBlank { "HTTP ${resp.code} from X" })}}"""
                     }
                     saveCache("temp_res_$callbackId", payload)
                     (context as? MainActivity)?.dispatchJsCallback(callbackId)
@@ -132,6 +141,10 @@ class TwitterBridge(private val context: Context) {
 
     @JavascriptInterface
     fun executePost(url: String, jsonPayload: String): String {
+        val parsedUrl = url.toHttpUrlOrNull()
+        if (parsedUrl?.isHttps != true || parsedUrl.host != "x.com" || !parsedUrl.encodedPath.endsWith("/CreateTweet")) {
+            return errorPayload("Unsupported post URL")
+        }
         val authToken = prefs.getString("auth_token", "") ?: ""
         val ct0 = prefs.getString("ct0", "") ?: ""
 
@@ -157,7 +170,7 @@ class TwitterBridge(private val context: Context) {
                 if (response.isSuccessful) {
                     body
                 } else {
-                    """{"error": true, "status": ${response.code}, "message": ${org.json.JSONObject.quote(body.take(200))}}"""
+                    """{"error": true, "status": ${response.code}, "message": ${JSONObject.quote(body.take(200).ifBlank { "HTTP ${response.code} from X" })}}"""
                 }
             }
         } catch (e: Exception) {
@@ -194,8 +207,7 @@ class TwitterBridge(private val context: Context) {
 
     @JavascriptInterface
     fun isUsingLiveHtml(): Boolean {
-        val liveFile = File(context.filesDir, "live_index.html")
-        return liveFile.exists() && liveFile.length() > 500
+        return (context as? MainActivity)?.isUsingLiveHtml() ?: false
     }
 
     @JavascriptInterface
@@ -206,6 +218,23 @@ class TwitterBridge(private val context: Context) {
     @JavascriptInterface
     fun getAppVersionInfo(): String {
         val isLive = isUsingLiveHtml()
-        return """{"version": "1.0.4", "build": "2026.11.10.5", "isLive": $isLive}"""
+        val info = context.packageManager.getPackageInfo(context.packageName, 0)
+        return JSONObject()
+            .put("version", info.versionName ?: "unknown")
+            .put("build", androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(info))
+            .put("isLive", isLive)
+            .toString()
+    }
+
+    private fun errorPayload(message: String) = JSONObject().put("error", true).put("message", message).toString()
+
+    private fun isAllowedGetUrl(url: String): Boolean {
+        val parsed = url.toHttpUrlOrNull() ?: return false
+        if (!parsed.isHttps) return false
+        return when (parsed.host) {
+            "x.com", "api.twitter.com" -> parsed.encodedPath.startsWith("/i/api/") || parsed.encodedPath.startsWith("/1.1/search/")
+            "gist.githubusercontent.com" -> parsed.encodedPath.startsWith("/sovopr/c52e8a1490b3a5415525b27063726bbe/")
+            else -> false
+        }
     }
 }
