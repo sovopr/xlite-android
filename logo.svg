@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-labelledby="title desc">
+  <title id="title">X Lite</title>
+  <desc id="desc">White crossed strokes in a dark rounded square with a small blue accent</desc>
+  <rect x="1" y="1" width="62" height="62" rx="15" fill="#101216" stroke="#353a40" stroke-width="2"/>
+  <path d="M14 13h8l29 38h-8zM43 13h7L21 51h-7z" fill="#f7f9fa"/>
+  <circle cx="51" cy="13" r="4" fill="#1d9bf0"/>
+</svg>

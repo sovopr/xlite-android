@@ -43,17 +43,22 @@ a { color: var(--accent); text-decoration: none; }
   z-index: 100;
 }
 .header-logo {
-  font-size: 22px;
-  font-weight: 900;
   color: var(--text);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
+}
+.header-logo svg {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: block;
 }
 .header-sub {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-muted);
-  font-weight: 500;
+  font-weight: 600;
+  letter-spacing: .02em;
 }
 
 /* Tabs */
@@ -320,7 +325,11 @@ a { color: var(--accent); text-decoration: none; }
 
 <div class="header">
     <div class="header-logo">
-        <span>𝕏</span>
+        <svg viewBox="0 0 64 64" role="img" aria-label="X Lite logo" xmlns="http://www.w3.org/2000/svg">
+            <rect x="1" y="1" width="62" height="62" rx="15" fill="#101216" stroke="#353a40" stroke-width="2"/>
+            <path d="M14 13h8l29 38h-8zM43 13h7L21 51h-7z" fill="#f7f9fa"/>
+            <circle cx="51" cy="13" r="4" fill="#1d9bf0"/>
+        </svg>
         <span class="header-sub">Lite</span>
     </div>
 </div>
@@ -1247,13 +1256,17 @@ let currentTweetsList = [];
 let allTweetsMap = {};
 let isFetching = false;
 let pendingCallbacks = {};
-const APP_VERSION = '1.0.7';
-const APP_BUILD = '2026.11.10.8';
+const APP_VERSION = '1.0.8';
+const APP_BUILD = '2026.11.10.9';
 const FEED_REFRESH_MS = 5 * 60 * 1000;
 const FEED_PAGE_SIZE = 6;
 let currentView = 'feed';
 let viewGeneration = 0;
 let lastSearchQuery = '';
+let searchState = null;
+let threadOriginView = 'feed';
+let savedSearchMarkup = '';
+let savedSearchScrollY = 0;
 let searchTransactionClient = null;
 let searchTransactionFetchedAt = 0;
 let searchTransactionWaiters = [];
@@ -2045,6 +2058,21 @@ function loadMoreTweets(feedType) {
 
 // Conversation / Thread View
 function viewThread(tweetId) {
+    if (currentView !== 'thread') {
+        threadOriginView = currentView;
+        if (currentView === 'search') {
+            if (searchState && searchState.loading) {
+                searchState.loading = false;
+                if (searchState.cursor) renderSearchLoadMore('Search was interrupted. Retry to continue.');
+                else {
+                    document.getElementById('searchResults').innerHTML = '<div class="card"><p class="card-desc">Search was interrupted. Search again to retry.</p></div>';
+                    document.getElementById('searchBtn').disabled = false;
+                }
+            }
+            savedSearchMarkup = document.getElementById('mainContent').innerHTML;
+            savedSearchScrollY = window.scrollY;
+        }
+    }
     currentView = 'thread';
     viewGeneration++;
     currentFeedOrigin = currentTab;
@@ -2167,6 +2195,15 @@ window.onpopstate = function(e) {
         currentView = 'thread';
         viewGeneration++;
         renderThreadView(e.state.id);
+    } else if (currentView === 'thread' && threadOriginView === 'search' && savedSearchMarkup) {
+        currentView = 'search';
+        viewGeneration++;
+        document.getElementById('mainContent').innerHTML = savedSearchMarkup;
+        document.getElementById('tabNav').style.display = 'none';
+        document.querySelectorAll('.bottom-item').forEach((el, idx) => {
+            el.classList.toggle('active', idx === 1);
+        });
+        window.scrollTo(0, savedSearchScrollY);
     } else {
         let origin = (e.state && e.state.originTab) ? e.state.originTab : currentFeedOrigin || currentTab;
         restoreFeedView(origin);
@@ -2182,7 +2219,8 @@ function renderSearch() {
             <button type="submit" class="btn" id="searchBtn">Search</button>
         </form>
     </div>
-    <div id="searchResults"></div>`;
+    <div id="searchResults"></div>
+    <div id="searchLoadMoreBox"></div>`;
 }
 
 function searchTag(tag) {
@@ -2246,11 +2284,41 @@ function executeSearch(e) {
     if (!q) return;
     lastSearchQuery = q;
     const generation = ++viewGeneration;
-
     const resDiv = document.getElementById('searchResults');
     resDiv.innerHTML = '<div class="spinner">Searching...</div>';
+    searchState = { query: q, cursor: null, usedCursors: new Set(), seenIds: new Set(), queryId: null, loading: false };
+    const moreBox = document.getElementById('searchLoadMoreBox');
+    if (moreBox) moreBox.innerHTML = '';
+    fetchSearchPage(generation, null);
+}
+
+function loadMoreSearch() {
+    if (!searchState || !searchState.cursor || searchState.loading || currentView !== 'search') return;
+    fetchSearchPage(viewGeneration, searchState.cursor);
+}
+
+function renderSearchLoadMore(message) {
+    const box = document.getElementById('searchLoadMoreBox');
+    if (!box || !searchState) return;
+    if (!searchState.cursor && !message) { box.innerHTML = ''; return; }
+    box.innerHTML = `<div class="load-more-box">
+        ${message ? `<p class="card-desc" role="alert" style="margin-bottom:10px;">${escapeHtml(message)}</p>` : ''}
+        <button type="button" class="btn btn-secondary btn-block" onclick="loadMoreSearch()" ${searchState.loading ? 'disabled' : ''}>
+            ${searchState.loading ? 'Loading...' : message ? 'Retry Load More' : 'Load More'}
+        </button>
+    </div>`;
+}
+
+function fetchSearchPage(generation, cursor) {
+    if (!searchState || searchState.loading || generation !== viewGeneration || currentView !== 'search') return;
+    const state = searchState;
+    const q = state.query;
+    const isPaging = !!cursor;
+    const resDiv = document.getElementById('searchResults');
     const btn = document.getElementById('searchBtn');
+    state.loading = true;
     if (btn) btn.disabled = true;
+    if (isPaging) renderSearchLoadMore();
 
     let variables = {
         rawQuery: q,
@@ -2258,16 +2326,20 @@ function executeSearch(e) {
         querySource: 'typed_query',
         product: 'Top'
     };
+    if (cursor) variables.cursor = cursor;
 
     // Query IDs rotate. The first ID was verified against X's current web client.
-    const queryIds = ['vLHjqbDv7TPFMBkIIO1nOA', 'GcXk9vN_d1jUfHNqLacXQA'];
+    const queryIds = [state.queryId, 'vLHjqbDv7TPFMBkIIO1nOA', 'GcXk9vN_d1jUfHNqLacXQA'].filter((id, i, all) => id && all.indexOf(id) === i);
     let lastError = '';
     function showUnavailable(message) {
+        if (generation !== viewGeneration || state !== searchState || currentView !== 'search') return;
+        state.loading = false;
         if (btn) btn.disabled = false;
-        resDiv.innerHTML = `<div class="card"><div class="card-title" style="color:var(--red);">Search unavailable</div><p class="card-desc">${escapeHtml(message)}</p><button type="button" class="btn btn-secondary" onclick="openSearchInX()">Open X search (uses more data)</button></div>`;
+        if (isPaging) renderSearchLoadMore(message);
+        else resDiv.innerHTML = `<div class="card"><div class="card-title" style="color:var(--red);">Search unavailable</div><p class="card-desc">${escapeHtml(message)}</p><button type="button" class="btn btn-secondary" onclick="openSearchInX()">Open X search (uses more data)</button></div>`;
     }
     function handleResponse(response, index, retry) {
-        if (generation !== viewGeneration || currentView !== 'search') return;
+        if (generation !== viewGeneration || state !== searchState || currentView !== 'search') return;
         const parsed = parseTwitterGraphql(response);
         if (parsed.error) {
             lastError = parsed.error;
@@ -2275,11 +2347,27 @@ function executeSearch(e) {
             else showUnavailable(lastError);
             return;
         }
+        state.loading = false;
+        state.queryId = queryIds[index];
+        if (cursor) state.usedCursors.add(cursor);
+        const freshTweets = parsed.tweets.filter(tweet => !state.seenIds.has(tweet.id));
+        freshTweets.forEach(tweet => {
+            state.seenIds.add(tweet.id);
+            allTweetsMap[tweet.id] = tweet;
+        });
+        const next = parsed.nextCursor;
+        state.cursor = next && next !== cursor && !state.usedCursors.has(next) ? next : null;
         if (btn) btn.disabled = false;
-        renderSearchResults(q, parsed.tweets, resDiv);
+        if (isPaging) {
+            currentTweetsList.push(...freshTweets);
+            resDiv.insertAdjacentHTML('beforeend', freshTweets.map(renderTweetHtml).join(''));
+        } else {
+            renderSearchResults(q, freshTweets, resDiv);
+        }
+        renderSearchLoadMore();
     }
     function tryPostQuery(index) {
-        if (generation !== viewGeneration || currentView !== 'search') return;
+        if (generation !== viewGeneration || state !== searchState || currentView !== 'search') return;
         if (index >= queryIds.length) {
             showUnavailable(lastError || 'X changed its search endpoint. Please try again later.');
             return;
@@ -2288,7 +2376,7 @@ function executeSearch(e) {
         const body = JSON.stringify({ variables, features: GRAPHQL_FEATURES, queryId: queryIds[index] });
         // The original APK supports POST without X's newer GET transaction header.
         setTimeout(() => {
-            if (generation !== viewGeneration || currentView !== 'search') return;
+            if (generation !== viewGeneration || state !== searchState || currentView !== 'search') return;
             let response;
             try {
                 response = AndroidBridge.executePost(`https://x.com${path}`, body);
@@ -2300,7 +2388,7 @@ function executeSearch(e) {
         }, 50);
     }
     function tryQuery(index) {
-        if (generation !== viewGeneration || currentView !== 'search') return;
+        if (generation !== viewGeneration || state !== searchState || currentView !== 'search') return;
         if (index >= queryIds.length) {
             showUnavailable(lastError || 'X changed its search endpoint. Please try again later.');
             return;
@@ -2321,7 +2409,7 @@ function executeSearch(e) {
         return;
     }
     prepareSearchTransaction((error) => {
-        if (generation !== viewGeneration || currentView !== 'search') return;
+        if (generation !== viewGeneration || state !== searchState || currentView !== 'search') return;
         if (error) showUnavailable(error);
         else tryQuery(0);
     });
@@ -2391,6 +2479,7 @@ function postReply(e, replyToId) {
 
 function renderSearchResults(q, tweets, resDiv) {
     if (!tweets || tweets.length === 0) {
+        currentTweetsList = [];
         resDiv.innerHTML = `<div class="card"><p class="card-desc">No results found for "${escapeHtml(q)}"</p></div>`;
         return;
     }
