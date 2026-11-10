@@ -44,16 +44,16 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         with:
-          tag_name: v1.0.2
-          name: "𝕏 Lite v1.0.2 (Clean Native Minimal UI & Fixed Replies)"
+          tag_name: v1.0.3
+          name: "𝕏 Lite v1.0.3 (Search & For You Fixes, Thread Navigation & Version Display)"
           body: |
-            ### 𝕏 Lite Android APK v1.0.2
-            - **Clean Minimal UI**: Stripped all vibecoded neon colors, header pills, and badges. Pure black OLED aesthetic matching official 𝕏.
-            - **Fixed Replies**: Configured modern `CreateTweet` endpoint with full variables (`in_reply_to_tweet_id`, `exclude_reply_user_ids`) and error handling.
-            - **Fixed OTA Updates**: Cleaned network headers so GitHub update requests are not rejected with 404s.
-            - **Settings-Only Updates**: Moved the update button exclusively into Settings to keep the main interface distraction-free.
-
-            **Download the attached APK below and install on your phone.**
+            ### 𝕏 Lite Android APK v1.0.3 (Hotfix Release)
+            - **Fixed Search**: Multi-tier search fallback supporting modern GraphQL query IDs (`flaR-PUMshxFWZWPNpq4zA`, `1BP5aKg8NvTNvRCyyCyq8g`) and direct v1.1 REST search.
+            - **Fixed "For You" Feed**: Verified query ID `2ee46L1AFXmnTa0EvUog-Q/HomeTimeline` with clean parameters matching Following timeline.
+            - **Fixed Persistent "Updating..." Status**: Auto-clearing background refresh toast (auto-hides after 4s) and explicit "Feed updated" confirmation.
+            - **Fixed Thread Navigation**: Retains source feed (`For You` vs `Following`), instant focal tweet rendering via global cache, and tab bar retention.
+            - **Version Display in Settings**: Explicit version number (`v1.0.3`), build timestamp, and runtime indicator (`Live OTA` vs `Bundled APK`).
+            - **OTA Hot Updates**: Pull future updates seamlessly in Settings without reinstalling.
           files: ./xlite-fup-release.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
