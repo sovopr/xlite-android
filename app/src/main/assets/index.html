@@ -177,6 +177,17 @@ a { color: var(--accent); text-decoration: none; }
   align-items: center;
   gap: 4px;
 }
+.quoted-box {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+}
+.quoted-box:active {
+  background: rgba(255, 255, 255, 0.05);
+}
 
 /* Bottom Bar */
 .bottom-bar {
@@ -453,7 +464,11 @@ function performAsyncGet(url, callback) {
             window.__onAsyncFinish(cbId, res);
         }, 10);
     } else {
-        callback(JSON.stringify({ error: true, message: 'Bridge not available' }));
+        // Fallback to native browser fetch
+        fetch(url)
+            .then(r => r.text())
+            .then(txt => callback(txt))
+            .catch(err => callback(JSON.stringify({ error: true, message: err.message })));
     }
 }
 
@@ -561,6 +576,51 @@ function copyTweetLink(screenName, id) {
     }
 }
 
+// In-place HD image loader
+function loadHdImg(btn, url, imgId) {
+    btn.innerHTML = 'Loading HD...';
+    btn.disabled = true;
+    const img = document.getElementById(imgId);
+    if (!img) return;
+
+    const hdImg = new Image();
+    hdImg.src = 'https://local.xlite/img?url=' + encodeURIComponent(url) + '&mode=hd';
+    hdImg.onload = function() {
+        img.src = hdImg.src;
+        btn.innerHTML = '✓ HD Loaded';
+        btn.style.color = 'var(--accent)';
+    };
+    hdImg.onerror = function() {
+        btn.innerHTML = 'Retry HD';
+        btn.disabled = false;
+    };
+}
+
+function loadThumbImg(btn, url, imgId) {
+    btn.innerHTML = 'Loading image...';
+    btn.disabled = true;
+    const img = document.createElement('img');
+    img.id = imgId;
+    img.className = 'tweet-img';
+    img.src = 'https://local.xlite/img?url=' + encodeURIComponent(url) + '&mode=thumb';
+    img.onload = function() {
+        const parent = btn.parentElement;
+        parent.innerHTML = '';
+        parent.appendChild(img);
+        const hdBox = document.createElement('div');
+        hdBox.style = 'text-align:right; margin-top:4px;';
+        hdBox.innerHTML = `
+            <button type="button" onclick="loadHdImg(this, '${escapeHtml(url)}', '${imgId}')" style="font-size:12px; color:var(--text-muted); background:none; border:none; cursor:pointer; padding:4px 8px;">
+                HD View
+            </button>`;
+        parent.appendChild(hdBox);
+    };
+    img.onerror = function() {
+        btn.innerHTML = 'Retry loading';
+        btn.disabled = false;
+    };
+}
+
 function renderTweetHtml(tw) {
     let rtHtml = tw.is_retweet
         ? `<div class="retweet-banner">⇄ Retweeted by ${escapeHtml(tw.retweeted_by || 'Someone')}</div>`
@@ -570,20 +630,42 @@ function renderTweetHtml(tw) {
     if (tw.media && tw.media.length > 0) {
         mediaHtml += '<div style="margin-top:8px;" onclick="event.stopPropagation()">';
         tw.media.forEach(m => {
+            let imgId = 'img_' + Math.random().toString(36).substr(2, 9);
             if (appConfig.image_mode === 'auto') {
-                mediaHtml += `<img src="https://local.xlite/img?url=${encodeURIComponent(m.url)}&mode=thumb" class="tweet-img" loading="lazy" />`;
+                mediaHtml += `
+                <div>
+                    <img id="${imgId}" src="https://local.xlite/img?url=${encodeURIComponent(m.url)}&mode=thumb" class="tweet-img" loading="lazy" />
+                    <div style="text-align:right; margin-top:4px;">
+                        <button type="button" onclick="loadHdImg(this, '${escapeHtml(m.url)}', '${imgId}')" style="font-size:12px; color:var(--text-muted); background:none; border:none; cursor:pointer; padding:4px 8px;">
+                            HD View
+                        </button>
+                    </div>
+                </div>`;
             } else if (appConfig.image_mode === 'off') {
                 mediaHtml += `<div style="font-size:13px; color:var(--text-muted); margin-top:4px;">[Photo]</div>`;
             } else {
                 mediaHtml += `
                 <div style="margin-top:6px;">
-                    <button type="button" class="btn btn-secondary" onclick="loadOnDemandImg(this, '${m.url}')" style="font-size:13px; padding:6px 14px; width:100%;">
+                    <button type="button" class="btn btn-secondary btn-block" onclick="loadThumbImg(this, '${escapeHtml(m.url)}', '${imgId}')" style="font-size:13px; padding:8px 14px;">
                         Load Image (~3.5 KB)
                     </button>
                 </div>`;
             }
         });
         mediaHtml += '</div>';
+    }
+
+    let quotedHtml = '';
+    if (tw.quoted) {
+        let q = tw.quoted;
+        quotedHtml = `
+        <div class="quoted-box" onclick="viewThread('${escapeHtml(q.id)}'); event.stopPropagation();">
+            <div class="tweet-header">
+                <span class="tweet-name">${escapeHtml(q.user_name || q.user_screen_name || '𝕏 User')}</span>
+                <span class="tweet-handle">${q.user_screen_name ? '@' + escapeHtml(q.user_screen_name) : ''}</span>
+            </div>
+            <div class="tweet-body" style="font-size:14px; margin-top:2px;">${linkify(q.text)}</div>
+        </div>`;
     }
 
     let handleHtml = tw.user_screen_name ? `<span class="tweet-handle">@${escapeHtml(tw.user_screen_name)}</span>` : '';
@@ -602,6 +684,7 @@ function renderTweetHtml(tw) {
         </div>
         <div class="tweet-body" onclick="viewThread('${escapeHtml(tw.id)}')">${linkify(tw.text)}</div>
         ${mediaHtml}
+        ${quotedHtml}
         <div class="tweet-actions">
             <div class="tweet-actions-left">
                 <span class="action-item" onclick="viewThread('${escapeHtml(tw.id)}')">💬 ${tw.replies || 0}</span>
@@ -614,27 +697,6 @@ function renderTweetHtml(tw) {
             </div>
         </div>
     </div>`;
-}
-
-function loadOnDemandImg(btn, url) {
-    btn.innerHTML = 'Loading...';
-    btn.disabled = true;
-    const img = document.createElement('img');
-    img.src = 'https://local.xlite/img?url=' + encodeURIComponent(url) + '&mode=thumb';
-    img.className = 'tweet-img';
-    img.onload = function() {
-        const parent = btn.parentElement;
-        parent.innerHTML = '';
-        parent.appendChild(img);
-        const hd = document.createElement('div');
-        hd.style = 'text-align:right; font-size:12px; margin-top:4px;';
-        hd.innerHTML = `<a href="https://local.xlite/img?url=${encodeURIComponent(url)}&mode=hd" target="_blank" style="color:var(--text-muted);">HD View</a>`;
-        parent.appendChild(hd);
-    };
-    img.onerror = function() {
-        btn.innerHTML = 'Retry loading';
-        btn.disabled = false;
-    };
 }
 
 function extractUser(tw) {
@@ -701,11 +763,12 @@ function parseTwitterGraphql(jsonStr) {
             }
         }
 
+        // Conversation thread replies & modules
         let subItems = content.items || [];
         subItems.forEach(sub => {
-            let sItem = sub.item?.itemContent;
+            let sItem = sub.item?.itemContent || sub.itemContent || sub.item?.content?.itemContent;
             if (sItem && sItem.itemType === 'TimelineTweet') {
-                let sRes = sItem.tweet_results?.result;
+                let sRes = sItem.tweet_results?.result || sItem.result;
                 if (sRes) {
                     let parsed = parseSingleTweet(sRes);
                     if (parsed) tweets.push(parsed);
@@ -718,9 +781,10 @@ function parseTwitterGraphql(jsonStr) {
 }
 
 function parseSingleTweet(tw) {
-    if (tw.__typename === 'TweetWithVisibilityResults') tw = tw.tweet || {};
+    if (!tw) return null;
+    if (tw.__typename === 'TweetWithVisibilityResults') tw = tw.tweet || tw;
     let legacy = tw.legacy || {};
-    let id = legacy.id_str || tw.rest_id;
+    let id = legacy.id_str || tw.rest_id || tw.id_str;
     if (!id) return null;
 
     let isRetweet = false;
@@ -751,6 +815,13 @@ function parseSingleTweet(tw) {
         }
     });
 
+    // Quoted tweet
+    let quoted = null;
+    let qRes = tw.quoted_status_result?.result;
+    if (qRes) {
+        quoted = parseSingleTweet(qRes);
+    }
+
     return {
         id,
         text,
@@ -761,6 +832,7 @@ function parseSingleTweet(tw) {
         retweets: legacy.retweet_count || 0,
         replies: legacy.reply_count || 0,
         media,
+        quoted,
         is_retweet: isRetweet,
         retweeted_by: retweetedBy
     };
@@ -814,8 +886,9 @@ function loadFeed(feedType) {
     }
 
     if (!hasCached) {
+        // Prevent double loading indicator: only show spinner in container, do NOT show status bar
+        showStatus('', false);
         container.innerHTML = '<div class="spinner">Loading...</div>';
-        showStatus('Loading...', false);
     }
 
     fetchFeedData(feedType, false);
@@ -929,12 +1002,25 @@ function renderThreadView(tweetId) {
         <span>Conversation</span>
     </div>
     <div id="threadContainer">
-        <div class="spinner">Loading replies...</div>
+        <div class="spinner">Loading conversation...</div>
     </div>`;
 
     let cachedFocal = currentTweetsList.find(t => t.id === tweetId);
 
-    let url = `https://x.com/i/api/graphql/qpemjmVMoTWDvcRT43JIVQ/TweetDetail?variables=${encodeURIComponent(JSON.stringify({focalTweetId: tweetId, with_rux_injections: false, rankingMode: "Relevance", includePromotedContent: false, withCommunity: true}))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
+    // Full schema-compliant variables for TweetDetail
+    let variables = {
+        focalTweetId: tweetId,
+        referrer: "tweet",
+        with_rux_injections: false,
+        rankingMode: "Relevance",
+        includePromotedContent: false,
+        withCommunity: true,
+        withQuickPromoteEligibilityTweetFields: false,
+        withBirdwatchNotes: true,
+        withVoice: true
+    };
+
+    let url = `https://x.com/i/api/graphql/qpemjmVMoTWDvcRT43JIVQ/TweetDetail?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
 
     performAsyncGet(url, (resStr) => {
         let parsed = parseTwitterGraphql(resStr);
@@ -960,8 +1046,10 @@ function renderThreadView(tweetId) {
         </div>`;
 
         if (replies.length > 0) {
-            out += '<div style="padding:12px 16px; font-size:14px; font-weight:700; color:var(--text-muted); border-bottom:1px solid var(--border);">Replies</div>';
+            out += '<div style="padding:12px 16px; font-size:14px; font-weight:700; color:var(--text-muted); border-bottom:1px solid var(--border);">Replies (' + replies.length + ')</div>';
             out += replies.map(renderTweetHtml).join('');
+        } else if (parsed.error && !focal) {
+            out += `<div class="card"><div class="card-title" style="color:var(--red);">Error</div><p class="card-desc">${escapeHtml(parsed.error)}</p></div>`;
         } else {
             out += '<div style="padding:28px 16px; text-align:center; color:var(--text-muted); font-size:14px;">No replies yet</div>';
         }
@@ -1070,28 +1158,53 @@ function executeSearch(e) {
     const resDiv = document.getElementById('searchResults');
     resDiv.innerHTML = '<div class="spinner">Searching...</div>';
 
-    let url = `https://x.com/i/api/graphql/vLHjqbDv7TPFMBkIIO1nOA/SearchTimeline?variables=${encodeURIComponent(JSON.stringify({rawQuery: q, count: 15, querySource: 'typed_query'}))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
+    // Full schema-compliant variables for SearchTimeline
+    let variables = {
+        rawQuery: q,
+        count: 20,
+        querySource: 'typed_query',
+        product: 'Top',
+        withGrokTranslatedBio: false,
+        withQuickPromoteEligibilityTweetFields: false
+    };
+
+    let url = `https://x.com/i/api/graphql/3fEctOs2-FvTB7_mvm1hrQ/SearchTimeline?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
 
     performAsyncGet(url, (resStr) => {
         let parsed = parseTwitterGraphql(resStr);
         if (parsed.error) {
-            resDiv.innerHTML = `<div class="card"><div class="card-title" style="color:var(--red);">Error</div><p class="card-desc">${escapeHtml(parsed.error)}</p></div>`;
-        } else if (parsed.tweets.length === 0) {
-            resDiv.innerHTML = `<div class="card"><p class="card-desc">No results found for "${escapeHtml(q)}"</p></div>`;
+            // Fallback to legacy queryId if modern queryId rejected
+            let fallbackUrl = `https://x.com/i/api/graphql/vLHjqbDv7TPFMBkIIO1nOA/SearchTimeline?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
+            performAsyncGet(fallbackUrl, (fbStr) => {
+                let fbParsed = parseTwitterGraphql(fbStr);
+                if (fbParsed.error) {
+                    resDiv.innerHTML = `<div class="card"><div class="card-title" style="color:var(--red);">Search Error</div><p class="card-desc">${escapeHtml(fbParsed.error)}</p></div>`;
+                } else {
+                    renderSearchResults(q, fbParsed.tweets, resDiv);
+                }
+            });
         } else {
-            currentTweetsList = parsed.tweets;
-            let header = '';
-            if (q.startsWith('from:')) {
-                let user = q.replace('from:', '');
-                header = `
-                <div style="padding:14px 16px; border-bottom:1px solid var(--border);">
-                    <div style="font-weight:800; font-size:17px;">@${escapeHtml(user)}</div>
-                    <div style="font-size:13px; color:var(--text-muted);">Recent tweets</div>
-                </div>`;
-            }
-            resDiv.innerHTML = header + parsed.tweets.map(renderTweetHtml).join('');
+            renderSearchResults(q, parsed.tweets, resDiv);
         }
     });
+}
+
+function renderSearchResults(q, tweets, resDiv) {
+    if (!tweets || tweets.length === 0) {
+        resDiv.innerHTML = `<div class="card"><p class="card-desc">No results found for "${escapeHtml(q)}"</p></div>`;
+        return;
+    }
+    currentTweetsList = tweets;
+    let header = '';
+    if (q.startsWith('from:')) {
+        let user = q.replace('from:', '');
+        header = `
+        <div style="padding:14px 16px; border-bottom:1px solid var(--border);">
+            <div style="font-weight:800; font-size:17px;">@${escapeHtml(user)}</div>
+            <div style="font-size:13px; color:var(--text-muted);">Recent tweets</div>
+        </div>`;
+    }
+    resDiv.innerHTML = header + tweets.map(renderTweetHtml).join('');
 }
 
 function renderPost() {
