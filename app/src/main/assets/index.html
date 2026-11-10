@@ -1286,8 +1286,8 @@ let allTweetsMap = {};
 let bookmarksCache = null;
 let isFetching = false;
 let pendingCallbacks = {};
-const APP_VERSION = '1.0.11';
-const APP_BUILD = '2026.11.10.12';
+const APP_VERSION = '1.0.12';
+const APP_BUILD = '2026.11.10.13';
 const FEED_REFRESH_MS = 5 * 60 * 1000;
 const FEED_PAGE_SIZE = 6;
 let currentView = 'feed';
@@ -2762,6 +2762,7 @@ function saveSettings(e) {
         if (auth !== appConfig.auth_token || ct0 !== appConfig.ct0) {
             AndroidBridge.clearCache();
             AndroidBridge.saveCache('bookmarks', '[]');
+            bookmarksCache = [];
         }
         AndroidBridge.saveConfig(auth, ct0, mode);
         appConfig = { auth_token: auth, ct0: ct0, image_mode: mode };
