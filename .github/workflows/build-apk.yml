@@ -44,15 +44,15 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         with:
-          tag_name: v1.0.0
-          name: "𝕏 Lite v1.0.0 (Standalone Low-Bandwidth APK)"
+          tag_name: v1.0.1
+          name: "𝕏 Lite v1.0.1 (Dynamic Loading & In-App Hot Updates)"
           body: |
-            ### 𝕏 Lite Android APK (Airtel 64kbps FUP Edition)
-            - 100% on-phone compute (No Mac or server required)
-            - Direct low-bandwidth Twitter GraphQL integration
-            - Smart WebP image downscaling (~3.5 KB per photo)
-            - OLED Pitch Black Dark Mode
-            - Local SQLite / SharedPreferences storage
+            ### 𝕏 Lite Android APK v1.0.1 (Airtel 64kbps FUP Edition)
+            - **Fixed Usernames & Handles**: Authors and retweeters display correctly across all modern Twitter GraphQL schemas.
+            - **Fixed "For You" Feed**: Dedicated query ID `fedFLLzmiCAuzPgA8lyh8Q` with clean parameters.
+            - **Instant Stale-While-Revalidate**: Cached tweets appear immediately (0.01s), refreshing 12 tweets in background (~3.5 KB).
+            - **In-App Hot OTA Updates**: Tap `🔄 Update` in the app to pull future frontend changes directly without reinstalling the APK!
+            - **100% On-Phone Compute**: Runs directly on your phone, zero server or Mac needed.
 
             **Download the attached APK below and install on your phone.**
           files: ./xlite-fup-release.apk

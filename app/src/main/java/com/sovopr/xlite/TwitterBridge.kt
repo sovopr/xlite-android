@@ -3,11 +3,15 @@ package com.sovopr.xlite
 import android.content.Context
 import android.content.SharedPreferences
 import android.webkit.JavascriptInterface
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import okhttp3.brotli.BrotliInterceptor
+import java.io.File
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -95,6 +99,44 @@ class TwitterBridge(private val context: Context) {
     }
 
     @JavascriptInterface
+    fun executeGetAsync(url: String, callbackId: String) {
+        val authToken = prefs.getString("auth_token", "") ?: ""
+        val ct0 = prefs.getString("ct0", "") ?: ""
+
+        val cookieHeader = "auth_token=$authToken; ct0=$ct0"
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("authorization", "Bearer $BEARER_TOKEN")
+            .addHeader("x-csrf-token", ct0)
+            .addHeader("cookie", cookieHeader)
+            .addHeader("user-agent", USER_AGENT)
+            .addHeader("x-twitter-active-user", "yes")
+            .addHeader("x-twitter-client-language", "en")
+            .build()
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                val errPayload = """{"error": true, "message": ${org.json.JSONObject.quote(e.message ?: "Network error")}}"""
+                saveCache("temp_res_$callbackId", errPayload)
+                (context as? MainActivity)?.dispatchJsCallback(callbackId)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                response.use { resp ->
+                    val body = resp.body?.string() ?: ""
+                    val payload = if (resp.isSuccessful) {
+                        body
+                    } else {
+                        """{"error": true, "status": ${resp.code}, "message": ${org.json.JSONObject.quote(body.take(200))}}"""
+                    }
+                    saveCache("temp_res_$callbackId", payload)
+                    (context as? MainActivity)?.dispatchJsCallback(callbackId)
+                }
+            }
+        })
+    }
+
+    @JavascriptInterface
     fun executePost(url: String, jsonPayload: String): String {
         val authToken = prefs.getString("auth_token", "") ?: ""
         val ct0 = prefs.getString("ct0", "") ?: ""
@@ -125,5 +167,49 @@ class TwitterBridge(private val context: Context) {
         } catch (e: Exception) {
             """{"error": true, "message": ${org.json.JSONObject.quote(e.message ?: "Post failed")}}"""
         }
+    }
+
+    @JavascriptInterface
+    fun saveLiveHtml(htmlContent: String): Boolean {
+        return try {
+            if (!htmlContent.contains("<html") || !htmlContent.contains("mainContent")) {
+                return false
+            }
+            val liveFile = File(context.filesDir, "live_index.html")
+            liveFile.writeText(htmlContent, Charsets.UTF_8)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    @JavascriptInterface
+    fun resetLiveHtml(): Boolean {
+        return try {
+            val liveFile = File(context.filesDir, "live_index.html")
+            if (liveFile.exists()) {
+                liveFile.delete()
+            }
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    @JavascriptInterface
+    fun isUsingLiveHtml(): Boolean {
+        val liveFile = File(context.filesDir, "live_index.html")
+        return liveFile.exists() && liveFile.length() > 500
+    }
+
+    @JavascriptInterface
+    fun reloadApp() {
+        (context as? MainActivity)?.reloadAppUrl()
+    }
+
+    @JavascriptInterface
+    fun getAppVersionInfo(): String {
+        val isLive = isUsingLiveHtml()
+        return """{"version": "1.0.1", "isLive": $isLive}"""
     }
 }

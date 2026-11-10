@@ -3,7 +3,6 @@ package com.sovopr.xlite
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.net.Uri
 import android.os.Bundle
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -41,6 +40,8 @@ class MainActivity : AppCompatActivity() {
         settings.domStorageEnabled = true
         settings.allowFileAccess = true
         settings.allowContentAccess = true
+        settings.allowFileAccessFromFileURLs = true
+        settings.allowUniversalAccessFromFileURLs = true
 
         val bridge = TwitterBridge(this)
         webView.addJavascriptInterface(bridge, "AndroidBridge")
@@ -73,7 +74,28 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        webView.loadUrl("file:///android_asset/index.html")
+        loadInitialHtml()
+    }
+
+    fun loadInitialHtml() {
+        val liveIndex = File(filesDir, "live_index.html")
+        if (liveIndex.exists() && liveIndex.length() > 500) {
+            webView.loadUrl("file://${liveIndex.absolutePath}")
+        } else {
+            webView.loadUrl("file:///android_asset/index.html")
+        }
+    }
+
+    fun reloadAppUrl() {
+        runOnUiThread {
+            loadInitialHtml()
+        }
+    }
+
+    fun dispatchJsCallback(callbackId: String) {
+        runOnUiThread {
+            webView.evaluateJavascript("window.__onAsyncFinish('$callbackId');", null)
+        }
     }
 
     private fun handleImageRequest(targetUrl: String, mode: String, cacheDir: File): WebResourceResponse? {
@@ -116,8 +138,7 @@ class MainActivity : AppCompatActivity() {
 
             val quality = if (mode == "hd") 65 else 32
             val bos = ByteArrayOutputStream()
-            
-            // Android 11+ supports WEBP_LOSSY; Android 7+ supports WEBP
+
             @Suppress("DEPRECATION")
             val format = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
                 Bitmap.CompressFormat.WEBP_LOSSY
