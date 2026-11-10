@@ -1,0 +1,60 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Make Gradle Wrapper Executable
+        run: chmod +x gradlew
+
+      - name: Build Release APK
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: List Generated APKs
+        run: |
+          ls -lh app/build/outputs/apk/release/
+          cp app/build/outputs/apk/release/*.apk ./xlite-fup-release.apk
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xlite-fup-apk
+          path: ./xlite-fup-release.apk
+
+      - name: Create GitHub Release & Upload APK
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        with:
+          tag_name: v1.0.0
+          name: "𝕏 Lite v1.0.0 (Standalone Low-Bandwidth APK)"
+          body: |
+            ### 𝕏 Lite Android APK (Airtel 64kbps FUP Edition)
+            - 100% on-phone compute (No Mac or server required)
+            - Direct low-bandwidth Twitter GraphQL integration
+            - Smart WebP image downscaling (~3.5 KB per photo)
+            - OLED Pitch Black Dark Mode
+            - Local SQLite / SharedPreferences storage
+
+            **Download the attached APK below and install on your phone.**
+          files: ./xlite-fup-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
