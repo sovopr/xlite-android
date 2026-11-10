@@ -30,6 +30,26 @@ class TwitterBridge(private val context: Context) {
         const val USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
     }
 
+    private fun buildRequest(url: String): Request {
+        val isTwitter = url.contains("twitter.com") || url.contains("x.com")
+        val builder = Request.Builder().url(url)
+        if (isTwitter) {
+            val authToken = prefs.getString("auth_token", "") ?: ""
+            val ct0 = prefs.getString("ct0", "") ?: ""
+            val cookieHeader = "auth_token=$authToken; ct0=$ct0"
+            builder.addHeader("authorization", "Bearer $BEARER_TOKEN")
+                .addHeader("x-csrf-token", ct0)
+                .addHeader("cookie", cookieHeader)
+                .addHeader("user-agent", USER_AGENT)
+                .addHeader("x-twitter-active-user", "yes")
+                .addHeader("x-twitter-client-language", "en")
+        } else {
+            builder.addHeader("user-agent", USER_AGENT)
+                .addHeader("accept", "*/*")
+        }
+        return builder.build()
+    }
+
     @JavascriptInterface
     fun getCookies(): String {
         val auth = prefs.getString("auth_token", "") ?: ""
@@ -70,20 +90,7 @@ class TwitterBridge(private val context: Context) {
 
     @JavascriptInterface
     fun executeGet(url: String): String {
-        val authToken = prefs.getString("auth_token", "") ?: ""
-        val ct0 = prefs.getString("ct0", "") ?: ""
-
-        val cookieHeader = "auth_token=$authToken; ct0=$ct0"
-        val request = Request.Builder()
-            .url(url)
-            .addHeader("authorization", "Bearer $BEARER_TOKEN")
-            .addHeader("x-csrf-token", ct0)
-            .addHeader("cookie", cookieHeader)
-            .addHeader("user-agent", USER_AGENT)
-            .addHeader("x-twitter-active-user", "yes")
-            .addHeader("x-twitter-client-language", "en")
-            .build()
-
+        val request = buildRequest(url)
         return try {
             client.newCall(request).execute().use { response ->
                 val body = response.body?.string() ?: ""
@@ -100,20 +107,7 @@ class TwitterBridge(private val context: Context) {
 
     @JavascriptInterface
     fun executeGetAsync(url: String, callbackId: String) {
-        val authToken = prefs.getString("auth_token", "") ?: ""
-        val ct0 = prefs.getString("ct0", "") ?: ""
-
-        val cookieHeader = "auth_token=$authToken; ct0=$ct0"
-        val request = Request.Builder()
-            .url(url)
-            .addHeader("authorization", "Bearer $BEARER_TOKEN")
-            .addHeader("x-csrf-token", ct0)
-            .addHeader("cookie", cookieHeader)
-            .addHeader("user-agent", USER_AGENT)
-            .addHeader("x-twitter-active-user", "yes")
-            .addHeader("x-twitter-client-language", "en")
-            .build()
-
+        val request = buildRequest(url)
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 val errPayload = """{"error": true, "message": ${org.json.JSONObject.quote(e.message ?: "Network error")}}"""
@@ -153,6 +147,8 @@ class TwitterBridge(private val context: Context) {
             .addHeader("cookie", cookieHeader)
             .addHeader("user-agent", USER_AGENT)
             .addHeader("content-type", "application/json")
+            .addHeader("x-twitter-active-user", "yes")
+            .addHeader("x-twitter-client-language", "en")
             .build()
 
         return try {
@@ -210,6 +206,6 @@ class TwitterBridge(private val context: Context) {
     @JavascriptInterface
     fun getAppVersionInfo(): String {
         val isLive = isUsingLiveHtml()
-        return """{"version": "1.0.1", "isLive": $isLive}"""
+        return """{"version": "1.0.2", "isLive": $isLive}"""
     }
 }

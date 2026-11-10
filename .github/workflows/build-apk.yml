@@ -44,15 +44,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         with:
-          tag_name: v1.0.1
-          name: "𝕏 Lite v1.0.1 (Dynamic Loading & In-App Hot Updates)"
+          tag_name: v1.0.2
+          name: "𝕏 Lite v1.0.2 (Clean Native Minimal UI & Fixed Replies)"
           body: |
-            ### 𝕏 Lite Android APK v1.0.1 (Airtel 64kbps FUP Edition)
-            - **Fixed Usernames & Handles**: Authors and retweeters display correctly across all modern Twitter GraphQL schemas.
-            - **Fixed "For You" Feed**: Dedicated query ID `fedFLLzmiCAuzPgA8lyh8Q` with clean parameters.
-            - **Instant Stale-While-Revalidate**: Cached tweets appear immediately (0.01s), refreshing 12 tweets in background (~3.5 KB).
-            - **In-App Hot OTA Updates**: Tap `🔄 Update` in the app to pull future frontend changes directly without reinstalling the APK!
-            - **100% On-Phone Compute**: Runs directly on your phone, zero server or Mac needed.
+            ### 𝕏 Lite Android APK v1.0.2
+            - **Clean Minimal UI**: Stripped all vibecoded neon colors, header pills, and badges. Pure black OLED aesthetic matching official 𝕏.
+            - **Fixed Replies**: Configured modern `CreateTweet` endpoint with full variables (`in_reply_to_tweet_id`, `exclude_reply_user_ids`) and error handling.
+            - **Fixed OTA Updates**: Cleaned network headers so GitHub update requests are not rejected with 404s.
+            - **Settings-Only Updates**: Moved the update button exclusively into Settings to keep the main interface distraction-free.
 
             **Download the attached APK below and install on your phone.**
           files: ./xlite-fup-release.apk

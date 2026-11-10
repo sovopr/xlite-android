@@ -7,17 +7,14 @@
 <style>
 :root {
   --bg: #000000;
-  --surface: #121212;
-  --surface-hover: #1c1c1f;
-  --border: #27272a;
-  --text: #f4f4f5;
-  --text-muted: #a1a1aa;
+  --surface: #000000;
+  --card: #16181c;
+  --border: #2f3336;
+  --text: #e7e9ea;
+  --text-muted: #71767b;
   --accent: #1d9bf0;
-  --accent-light: #60a5fa;
-  --green: #00ba7c;
-  --green-bg: rgba(0, 186, 124, 0.15);
-  --red: #f91880;
-  --yellow: #f59e0b;
+  --accent-hover: #1a8cd8;
+  --red: #f4212e;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -25,123 +22,305 @@ body {
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 15px;
-  line-height: 1.45;
-  padding-bottom: 75px;
+  line-height: 1.4;
+  padding-bottom: 65px;
   -webkit-tap-highlight-color: transparent;
 }
 a { color: var(--accent); text-decoration: none; }
+
+/* Clean official header */
 .header {
   position: sticky;
   top: 0;
   background: rgba(0, 0, 0, 0.95);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
-  padding: 10px 14px;
+  height: 52px;
+  padding: 0 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   z-index: 100;
 }
-.header-left { display: flex; align-items: center; gap: 8px; }
-.header-title { font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 6px; }
-.badge { background: #1e3a5f; color: var(--accent-light); font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 9999px; }
-.savings-pill {
-  background: rgba(0, 186, 124, 0.15);
-  color: var(--green);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 9999px;
-  border: 1px solid rgba(0, 186, 124, 0.3);
+.header-logo {
+  font-size: 22px;
+  font-weight: 900;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.header-actions { display: flex; align-items: center; gap: 8px; }
-.update-btn {
-  background: rgba(29, 155, 240, 0.15);
-  border: 1px solid var(--accent);
-  color: var(--accent-light);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 4px 9px;
-  border-radius: 9999px;
-  cursor: pointer;
-}
-.update-btn:active { background: var(--accent); color: #fff; }
-.nav-tabs { display: flex; border-bottom: 1px solid var(--border); background: var(--surface); }
-.nav-tab { flex: 1; text-align: center; padding: 12px 6px; font-size: 14px; font-weight: 600; color: var(--text-muted); cursor: pointer; border-bottom: 2px solid transparent; }
-.nav-tab.active { color: var(--text); border-bottom: 2px solid var(--accent); }
-
-.status-pill {
-  padding: 6px 14px;
+.header-sub {
   font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* Tabs */
+.nav-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.nav-tab {
+  flex: 1;
+  text-align: center;
+  padding: 14px 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+}
+.nav-tab.active {
+  color: var(--text);
+  border-bottom: 3px solid var(--accent);
+}
+
+/* Subtle status bar */
+.status-bar {
+  padding: 6px 14px;
+  font-size: 13px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
   border-bottom: 1px solid var(--border);
-  background: #09090b;
+  background: #080808;
   color: var(--text-muted);
-  transition: all 0.2s ease;
 }
-.status-pill.updating { background: rgba(29, 155, 240, 0.1); color: var(--accent-light); }
-.status-pill.success { background: var(--green-bg); color: var(--green); }
-.status-pill.warning { background: rgba(245, 158, 11, 0.12); color: var(--yellow); }
+.status-bar.error {
+  color: #fca5a5;
+  background: rgba(244, 33, 46, 0.1);
+}
 
-.tweet { padding: 12px 14px; border-bottom: 1px solid var(--border); }
-.tweet:active { background: rgba(255, 255, 255, 0.02); }
-.tweet-header { display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px; flex-wrap: wrap; }
-.tweet-name { font-weight: 700; color: var(--text); }
-.tweet-handle { color: var(--text-muted); font-size: 13px; }
-.tweet-time { color: var(--text-muted); font-size: 13px; }
-.tweet-body { font-size: 15px; word-break: break-word; white-space: pre-wrap; line-height: 1.45; cursor: pointer; }
-.tweet-img { max-width: 100%; border-radius: 8px; margin-top: 8px; display: block; background: #18181b; }
-.tweet-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; font-size: 12px; color: var(--text-muted); }
-.tweet-actions-left { display: flex; align-items: center; gap: 18px; }
-.tweet-actions-right { display: flex; align-items: center; gap: 14px; }
-.action-item { cursor: pointer; display: flex; align-items: center; gap: 4px; }
-.action-item:hover { color: var(--accent); }
-.retweet-banner { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; display: flex; align-items: center; gap: 4px; }
+/* Tweets */
+.tweet {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.tweet:active {
+  background: rgba(255, 255, 255, 0.02);
+}
+.tweet-header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+.tweet-name {
+  font-weight: 700;
+  color: var(--text);
+  cursor: pointer;
+}
+.tweet-handle {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+.tweet-dot {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.tweet-time {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+.tweet-body {
+  font-size: 15px;
+  word-break: break-word;
+  white-space: pre-wrap;
+  line-height: 1.45;
+  cursor: pointer;
+}
+.tweet-img {
+  max-width: 100%;
+  border-radius: 12px;
+  margin-top: 8px;
+  display: block;
+  background: #16181c;
+  border: 1px solid var(--border);
+}
+.tweet-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 420px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.tweet-actions-left {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+.tweet-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.action-item {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
+}
+.action-item:active {
+  color: var(--accent);
+}
+.retweet-banner {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
 
-.bottom-bar { position: fixed; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.96); border-top: 1px solid var(--border); display: flex; justify-content: space-around; padding: 8px 0; z-index: 100; }
-.bottom-item { display: flex; flex-direction: column; align-items: center; font-size: 11px; color: var(--text-muted); cursor: pointer; }
-.bottom-item.active { color: var(--accent); font-weight: 700; }
+/* Bottom Bar */
+.bottom-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 52px;
+  background: rgba(0, 0, 0, 0.98);
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  z-index: 100;
+}
+.bottom-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 12px;
+}
+.bottom-item.active {
+  color: var(--text);
+  font-weight: 700;
+}
+.bottom-icon {
+  font-size: 18px;
+  line-height: 1.2;
+}
 
-.btn { display: inline-block; padding: 8px 16px; background: var(--accent); color: #fff; border: none; border-radius: 9999px; font-size: 14px; font-weight: 700; cursor: pointer; text-align: center; }
-.btn-block { display: block; width: 100%; }
-.btn-secondary { background: #27272a; color: var(--text); }
-.btn-secondary:active { background: #3f3f46; }
-.form-input, .form-textarea { width: 100%; background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 8px; font-size: 14px; margin-bottom: 12px; }
-.form-textarea { resize: vertical; min-height: 90px; }
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 14px; }
-.card h2 { font-size: 16px; margin-bottom: 8px; }
-.alert-error { background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #fca5a5; padding: 12px 14px; margin: 12px 14px; border-radius: 8px; font-size: 13px; }
-.spinner { text-align: center; padding: 30px 14px; color: var(--text-muted); font-size: 14px; }
-.load-more-box { padding: 14px; text-align: center; }
-.profile-card { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px; }
+/* Buttons and Inputs */
+.btn {
+  display: inline-block;
+  padding: 8px 18px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 9999px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: center;
+}
+.btn:active {
+  background: var(--accent-hover);
+}
+.btn-block {
+  display: block;
+  width: 100%;
+}
+.btn-secondary {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn-secondary:active {
+  background: #16181c;
+}
+.form-input, .form-textarea {
+  width: 100%;
+  background: #16181c;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 15px;
+  margin-bottom: 12px;
+  font-family: inherit;
+}
+.form-input:focus, .form-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.form-textarea {
+  resize: vertical;
+  min-height: 90px;
+}
+
+/* Clean cards for Settings */
+.card {
+  border-bottom: 1px solid var(--border);
+  padding: 16px;
+}
+.card-title {
+  font-size: 17px;
+  font-weight: 800;
+  margin-bottom: 6px;
+}
+.card-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+  line-height: 1.4;
+}
+.spinner {
+  text-align: center;
+  padding: 36px 16px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+.load-more-box {
+  padding: 16px;
+  text-align: center;
+}
+.sub-header {
+  height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 16px;
+  font-weight: 700;
+}
+.back-btn {
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 9999px;
+}
 </style>
 </head>
 <body>
 
 <div class="header">
-    <div class="header-left">
-        <div class="header-title">
-            <span>𝕏 Lite</span>
-            <span class="badge">64kbps FUP</span>
-        </div>
-        <span id="savingsPill" class="savings-pill" title="Data saved vs heavy official app">⚡ 98.4% Saved</span>
-    </div>
-    <div class="header-actions">
-        <button type="button" class="update-btn" onclick="triggerAppUpdate()" title="Check for in-app OTA updates">🔄 Update</button>
-        <span id="statusIndicator" style="font-size:11px; color:var(--green);">● Live</span>
+    <div class="header-logo">
+        <span>𝕏</span>
+        <span class="header-sub">Lite</span>
     </div>
 </div>
 
 <div id="tabNav" class="nav-tabs">
     <div class="nav-tab active" onclick="switchFeed('following')">Following</div>
     <div class="nav-tab" onclick="switchFeed('foryou')">For You</div>
-    <div class="nav-tab" onclick="switchFeed('cache')">💾 Offline</div>
+    <div class="nav-tab" onclick="switchFeed('cache')">Offline</div>
 </div>
 
-<div id="statusPill" class="status-pill" style="display:none;"></div>
+<div id="statusBar" class="status-bar" style="display:none;"></div>
 
 <div id="mainContent">
     <div id="feedContainer"></div>
@@ -149,19 +328,19 @@ a { color: var(--accent); text-decoration: none; }
 
 <div class="bottom-bar">
     <div class="bottom-item active" onclick="nav('feed')">
-        <span>🏠</span>
-        <span>Feed</span>
+        <span class="bottom-icon">⌂</span>
+        <span>Home</span>
     </div>
     <div class="bottom-item" onclick="nav('search')">
-        <span>🔍</span>
+        <span class="bottom-icon">⚲</span>
         <span>Search</span>
     </div>
     <div class="bottom-item" onclick="nav('post')">
-        <span>✍️</span>
+        <span class="bottom-icon">✎</span>
         <span>Post</span>
     </div>
     <div class="bottom-item" onclick="nav('settings')">
-        <span>⚙️</span>
+        <span class="bottom-icon">⚙</span>
         <span>Settings</span>
     </div>
 </div>
@@ -173,37 +352,6 @@ let appConfig = { auth_token: '', ct0: '', image_mode: 'tap' };
 let currentTweetsList = [];
 let isFetching = false;
 let pendingCallbacks = {};
-
-// Track data savings stats (inspired by Opera Mini & Twitter Lite)
-let dataStats = {
-    bytesReceived: 0,
-    bytesSaved: 0
-};
-
-try {
-    let savedStats = localStorage.getItem('xlite_stats');
-    if (savedStats) dataStats = JSON.parse(savedStats);
-} catch (e) {}
-
-function addDataStats(received, estimatedHeavy) {
-    dataStats.bytesReceived += received;
-    dataStats.bytesSaved += Math.max(0, estimatedHeavy - received);
-    try {
-        localStorage.setItem('xlite_stats', JSON.stringify(dataStats));
-    } catch(e) {}
-    updateSavingsDisplay();
-}
-
-function updateSavingsDisplay() {
-    const el = document.getElementById('savingsPill');
-    if (!el) return;
-    let total = dataStats.bytesReceived + dataStats.bytesSaved;
-    if (total > 0) {
-        let pct = Math.min(99.6, Math.max(90, (dataStats.bytesSaved / total) * 100)).toFixed(1);
-        let mbSaved = (dataStats.bytesSaved / (1024 * 1024)).toFixed(1);
-        el.innerHTML = `⚡ ${pct}% Saved (${mbSaved} MB)`;
-    }
-}
 
 const TIMELINE_CONFIG = {
     following: {
@@ -265,7 +413,6 @@ const GRAPHQL_FEATURES = {
 };
 
 function init() {
-    updateSavingsDisplay();
     if (window.AndroidBridge) {
         try {
             appConfig = JSON.parse(AndroidBridge.getCookies());
@@ -280,13 +427,13 @@ function init() {
     }
 }
 
-// Global callback dispatcher called from native Android on async completion
+// Global callback dispatcher for native Android async requests
 window.__onAsyncFinish = function(callbackId) {
     if (pendingCallbacks[callbackId]) {
         let resStr = '';
         if (window.AndroidBridge && AndroidBridge.getCache) {
             resStr = AndroidBridge.getCache('temp_res_' + callbackId);
-            AndroidBridge.saveCache('temp_res_' + callbackId, ''); // cleanup
+            AndroidBridge.saveCache('temp_res_' + callbackId, '');
         }
         let cb = pendingCallbacks[callbackId];
         delete pendingCallbacks[callbackId];
@@ -310,21 +457,21 @@ function performAsyncGet(url, callback) {
     }
 }
 
-function showStatusPill(text, type, autoHideMs) {
-    const pill = document.getElementById('statusPill');
-    if (!pill) return;
+function showStatus(text, isError, autoHideMs) {
+    const bar = document.getElementById('statusBar');
+    if (!bar) return;
     if (!text) {
-        pill.style.display = 'none';
+        bar.style.display = 'none';
         return;
     }
-    pill.className = 'status-pill ' + (type || '');
-    pill.innerHTML = text;
-    pill.style.display = 'flex';
+    bar.className = 'status-bar' + (isError ? ' error' : '');
+    bar.innerHTML = text;
+    bar.style.display = 'flex';
 
     if (autoHideMs) {
         setTimeout(() => {
-            if (pill.innerHTML === text) {
-                pill.style.display = 'none';
+            if (bar.innerHTML === text) {
+                bar.style.display = 'none';
             }
         }, autoHideMs);
     }
@@ -341,7 +488,7 @@ function nav(view) {
     if (view === 'feed') {
         loadFeed(currentTab);
     } else {
-        showStatusPill('', '');
+        showStatus('', false);
         if (view === 'search') renderSearch();
         else if (view === 'post') renderPost();
         else if (view === 'settings') renderSettings();
@@ -369,7 +516,6 @@ function linkify(text) {
     return s;
 }
 
-// Bookmarking & Saved Tweets
 function getBookmarks() {
     try {
         let b = AndroidBridge ? AndroidBridge.getCache('bookmarks') : localStorage.getItem('bookmarks');
@@ -388,13 +534,13 @@ function toggleBookmark(twId) {
     if (idx >= 0) {
         list.splice(idx, 1);
         if (el) el.innerHTML = '☆ Save';
-        showStatusPill('Removed from offline bookmarks', '', 2000);
+        showStatus('Removed from offline saved', false, 2000);
     } else {
         let tweetObj = currentTweetsList.find(t => t.id === twId);
         if (tweetObj) {
             list.unshift(tweetObj);
-            if (el) el.innerHTML = '⭐ Saved';
-            showStatusPill('⭐ Saved for offline reading!', 'success', 2500);
+            if (el) el.innerHTML = '★ Saved';
+            showStatus('Saved for offline reading', false, 2000);
         }
     }
     let s = JSON.stringify(list);
@@ -406,7 +552,7 @@ function copyTweetLink(screenName, id) {
     let url = 'https://x.com/' + (screenName || 'i') + '/status/' + id;
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(url).then(() => {
-            showStatusPill('🔗 Copied link to clipboard!', 'success', 2500);
+            showStatus('Link copied to clipboard', false, 2000);
         }).catch(() => {
             prompt('Copy link:', url);
         });
@@ -417,7 +563,7 @@ function copyTweetLink(screenName, id) {
 
 function renderTweetHtml(tw) {
     let rtHtml = tw.is_retweet
-        ? `<div class="retweet-banner">🔁 Retweeted by ${escapeHtml(tw.retweeted_by || 'Someone')}</div>`
+        ? `<div class="retweet-banner">⇄ Retweeted by ${escapeHtml(tw.retweeted_by || 'Someone')}</div>`
         : '';
 
     let mediaHtml = '';
@@ -427,12 +573,12 @@ function renderTweetHtml(tw) {
             if (appConfig.image_mode === 'auto') {
                 mediaHtml += `<img src="https://local.xlite/img?url=${encodeURIComponent(m.url)}&mode=thumb" class="tweet-img" loading="lazy" />`;
             } else if (appConfig.image_mode === 'off') {
-                mediaHtml += `<div style="font-size:12px; color:var(--text-muted); margin-top:4px;">[📷 Photo (0 KB mode)]</div>`;
+                mediaHtml += `<div style="font-size:13px; color:var(--text-muted); margin-top:4px;">[Photo]</div>`;
             } else {
                 mediaHtml += `
                 <div style="margin-top:6px;">
-                    <button type="button" class="btn btn-secondary" onclick="loadOnDemandImg(this, '${m.url}')" style="font-size:12px; padding:6px 12px; width:100%;">
-                        🖼️ View Image (~3.5 KB)
+                    <button type="button" class="btn btn-secondary" onclick="loadOnDemandImg(this, '${m.url}')" style="font-size:13px; padding:6px 14px; width:100%;">
+                        Load Image (~3.5 KB)
                     </button>
                 </div>`;
             }
@@ -441,14 +587,14 @@ function renderTweetHtml(tw) {
     }
 
     let handleHtml = tw.user_screen_name ? `<span class="tweet-handle">@${escapeHtml(tw.user_screen_name)}</span>` : '';
-    let timeHtml = tw.created_at ? `<span class="tweet-time">&bull; ${escapeHtml(tw.created_at)}</span>` : '';
+    let timeHtml = tw.created_at ? `<span class="tweet-dot">&middot;</span><span class="tweet-time">${escapeHtml(tw.created_at)}</span>` : '';
     let bookmarked = isBookmarked(tw.id);
 
     return `
     <div class="tweet" data-id="${escapeHtml(tw.id)}">
         ${rtHtml}
         <div class="tweet-header">
-            <span class="tweet-name" onclick="searchTag('from:${escapeHtml(tw.user_screen_name)}'); event.stopPropagation();" style="cursor:pointer;">
+            <span class="tweet-name" onclick="searchTag('from:${escapeHtml(tw.user_screen_name)}'); event.stopPropagation();">
                 ${escapeHtml(tw.user_name || tw.user_screen_name || '𝕏 User')}
             </span>
             ${handleHtml}
@@ -459,11 +605,11 @@ function renderTweetHtml(tw) {
         <div class="tweet-actions">
             <div class="tweet-actions-left">
                 <span class="action-item" onclick="viewThread('${escapeHtml(tw.id)}')">💬 ${tw.replies || 0}</span>
-                <span class="action-item">🔁 ${tw.retweets || 0}</span>
-                <span class="action-item">❤️ ${tw.likes || 0}</span>
+                <span class="action-item">⇄ ${tw.retweets || 0}</span>
+                <span class="action-item">♡ ${tw.likes || 0}</span>
             </div>
             <div class="tweet-actions-right">
-                <span class="action-item" id="bm-${escapeHtml(tw.id)}" onclick="toggleBookmark('${escapeHtml(tw.id)}')">${bookmarked ? '⭐ Saved' : '☆ Save'}</span>
+                <span class="action-item" id="bm-${escapeHtml(tw.id)}" onclick="toggleBookmark('${escapeHtml(tw.id)}')">${bookmarked ? '★ Saved' : '☆ Save'}</span>
                 <span class="action-item" onclick="copyTweetLink('${escapeHtml(tw.user_screen_name)}', '${escapeHtml(tw.id)}')">🔗</span>
             </div>
         </div>
@@ -471,23 +617,22 @@ function renderTweetHtml(tw) {
 }
 
 function loadOnDemandImg(btn, url) {
-    btn.innerHTML = '⏳ Loading (~3.5 KB)...';
+    btn.innerHTML = 'Loading...';
     btn.disabled = true;
     const img = document.createElement('img');
     img.src = 'https://local.xlite/img?url=' + encodeURIComponent(url) + '&mode=thumb';
     img.className = 'tweet-img';
     img.onload = function() {
-        addDataStats(3600, 1500000); // 3.6 KB downloaded vs 1.5 MB uncompressed photo!
         const parent = btn.parentElement;
         parent.innerHTML = '';
         parent.appendChild(img);
         const hd = document.createElement('div');
-        hd.style = 'text-align:right; font-size:11px; margin-top:2px;';
-        hd.innerHTML = `<a href="https://local.xlite/img?url=${encodeURIComponent(url)}&mode=hd" target="_blank" style="color:var(--text-muted);">🔍 HD (~12 KB)</a>`;
+        hd.style = 'text-align:right; font-size:12px; margin-top:4px;';
+        hd.innerHTML = `<a href="https://local.xlite/img?url=${encodeURIComponent(url)}&mode=hd" target="_blank" style="color:var(--text-muted);">HD View</a>`;
         parent.appendChild(hd);
     };
     img.onerror = function() {
-        btn.innerHTML = '⚠️ Tap to retry';
+        btn.innerHTML = 'Retry loading';
         btn.disabled = false;
     };
 }
@@ -556,7 +701,6 @@ function parseTwitterGraphql(jsonStr) {
             }
         }
 
-        // Support conversation / thread items
         let subItems = content.items || [];
         subItems.forEach(sub => {
             let sItem = sub.item?.itemContent;
@@ -626,31 +770,31 @@ function loadFeed(feedType) {
     const container = document.getElementById('mainContent');
 
     if (feedType === 'cache') {
-        showStatusPill('💾 Viewing offline cached tweets & bookmarks', '', 0);
+        showStatus('Viewing offline tweets', false, 0);
         let bookmarks = getBookmarks();
         let cached = AndroidBridge ? AndroidBridge.getCache('feed_cache') : '';
         let cachedList = [];
         try { if (cached) cachedList = JSON.parse(cached); } catch(e){}
 
         if (bookmarks.length === 0 && cachedList.length === 0) {
-            container.innerHTML = '<div class="card"><h2>No Saved Tweets</h2><p style="color:var(--text-muted); font-size:13px;">Tap ☆ Save on any tweet or browse feeds to save offline.</p></div>';
+            container.innerHTML = '<div class="card"><div class="card-title">No Offline Tweets</div><p class="card-desc">Tap ☆ Save on any tweet or browse feeds to save offline.</p></div>';
             return;
         }
 
         let out = '';
         if (bookmarks.length > 0) {
-            out += '<div style="padding:10px 14px; font-weight:700; font-size:13px; color:var(--accent-light); border-bottom:1px solid var(--border);">⭐ Bookmarked Tweets (' + bookmarks.length + '):</div>';
+            out += '<div style="padding:12px 16px; font-weight:700; font-size:14px; border-bottom:1px solid var(--border);">Saved Tweets (' + bookmarks.length + ')</div>';
             out += bookmarks.map(renderTweetHtml).join('');
         }
         if (cachedList.length > 0) {
-            out += '<div style="padding:10px 14px; font-weight:700; font-size:13px; color:var(--text-muted); border-bottom:1px solid var(--border);">Recent Offline Feed:</div>';
+            out += '<div style="padding:12px 16px; font-weight:700; font-size:14px; color:var(--text-muted); border-bottom:1px solid var(--border);">Recent Cache</div>';
             out += cachedList.map(renderTweetHtml).join('');
         }
         container.innerHTML = '<div id="feedContainer">' + out + '</div>';
         return;
     }
 
-    // --- STALE-WHILE-REVALIDATE (Instant Load) ---
+    // Stale-While-Revalidate: Instant Load
     let cachedFeed = '';
     if (window.AndroidBridge) {
         cachedFeed = AndroidBridge.getCache('feed_' + feedType);
@@ -664,14 +808,14 @@ function loadFeed(feedType) {
                 currentTweetsList = list;
                 container.innerHTML = '<div id="feedContainer">' + list.map(renderTweetHtml).join('') + '</div>';
                 hasCached = true;
-                showStatusPill('⚡ Updating in background (~3.5 KB)...', 'updating');
+                showStatus('Updating...', false);
             }
         } catch (e) {}
     }
 
     if (!hasCached) {
-        container.innerHTML = '<div class="spinner">⚡ Fetching feed over 64kbps (~3.5 KB)...</div>';
-        showStatusPill('⚡ Fetching feed over 64kbps...', 'updating');
+        container.innerHTML = '<div class="spinner">Loading...</div>';
+        showStatus('Loading...', false);
     }
 
     fetchFeedData(feedType, false);
@@ -694,7 +838,6 @@ function fetchFeedData(feedType, isPaging) {
 
     performAsyncGet(url, (resStr) => {
         isFetching = false;
-        addDataStats(resStr ? resStr.length : 3500, 2500000); // 3.5 KB vs 2.5 MB heavy client!
         let parsed = parseTwitterGraphql(resStr);
 
         const container = document.getElementById('mainContent');
@@ -702,21 +845,22 @@ function fetchFeedData(feedType, isPaging) {
         if (parsed.error) {
             let cachedFeed = AndroidBridge ? AndroidBridge.getCache('feed_' + feedType) : '';
             if (cachedFeed && !isPaging) {
-                showStatusPill(`⚠️ Offline (${escapeHtml(parsed.error)}) &bull; Showing cached`, 'warning', 5000);
+                showStatus('Offline: Showing cached tweets', false, 4000);
             } else {
-                showStatusPill('', '');
+                showStatus('', false);
                 container.innerHTML = `
-                <div class="alert-error">
-                    ⚠️ <strong>Error loading ${feedType}:</strong> ${escapeHtml(parsed.error)}<br><br>
-                    <a href="javascript:nav('settings')" style="color:#93c5fd; font-size:13px; font-weight:700;">Check Cookies in Settings &rarr;</a>
+                <div class="card">
+                    <div class="card-title" style="color:var(--red);">Error loading feed</div>
+                    <p class="card-desc">${escapeHtml(parsed.error)}</p>
+                    <a href="javascript:nav('settings')" class="btn btn-secondary">Check Settings &rarr;</a>
                 </div>`;
             }
             return;
         }
 
         if (parsed.tweets.length === 0 && !isPaging) {
-            showStatusPill('', '');
-            container.innerHTML = '<div class="card"><p>No tweets found.</p></div>';
+            showStatus('', false);
+            container.innerHTML = '<div class="card"><p class="card-desc">No tweets found.</p></div>';
             return;
         }
 
@@ -728,7 +872,7 @@ function fetchFeedData(feedType, isPaging) {
             if (feedDiv) {
                 feedDiv.insertAdjacentHTML('beforeend', parsed.tweets.map(renderTweetHtml).join(''));
             }
-            showStatusPill('✅ Loaded ' + parsed.tweets.length + ' more tweets', 'success', 2500);
+            showStatus('', false);
         } else {
             currentTweetsList = parsed.tweets;
             if (window.AndroidBridge) {
@@ -736,7 +880,7 @@ function fetchFeedData(feedType, isPaging) {
                 AndroidBridge.saveCache('feed_cache', JSON.stringify(parsed.tweets));
             }
             container.innerHTML = '<div id="feedContainer">' + parsed.tweets.map(renderTweetHtml).join('') + '</div>';
-            showStatusPill('✅ Updated just now', 'success', 2500);
+            showStatus('', false);
         }
 
         renderLoadMoreButton(feedType);
@@ -751,7 +895,7 @@ function renderLoadMoreButton(feedType) {
         const loadMoreHtml = `
         <div id="loadMoreBox" class="load-more-box">
             <button type="button" class="btn btn-secondary btn-block" onclick="loadMoreTweets('${feedType}')" style="padding:10px;">
-                📥 Load Next 12 Tweets (~3.5 KB)
+                Load More
             </button>
         </div>`;
         const container = document.getElementById('mainContent');
@@ -763,7 +907,7 @@ function loadMoreTweets(feedType) {
     const btn = document.querySelector('#loadMoreBox button');
     if (btn) {
         btn.disabled = true;
-        btn.innerHTML = '⏳ Loading next tweets (~3.5 KB)...';
+        btn.innerHTML = 'Loading...';
     }
     fetchFeedData(feedType, true);
 }
@@ -780,12 +924,12 @@ function renderThreadView(tweetId) {
 
     const container = document.getElementById('mainContent');
     container.innerHTML = `
-    <div style="padding:10px 14px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px;">
-        <button type="button" class="btn btn-secondary" onclick="window.history.back()" style="padding:4px 10px; font-size:12px;">&larr; Back</button>
-        <span style="font-weight:700; font-size:14px;">Conversation Thread</span>
+    <div class="sub-header">
+        <button type="button" class="back-btn" onclick="window.history.back()">&larr;</button>
+        <span>Conversation</span>
     </div>
     <div id="threadContainer">
-        <div class="spinner">⚡ Loading replies over 64kbps (~4 KB)...</div>
+        <div class="spinner">Loading replies...</div>
     </div>`;
 
     let cachedFocal = currentTweetsList.find(t => t.id === tweetId);
@@ -806,21 +950,20 @@ function renderThreadView(tweetId) {
         }
 
         out += `
-        <div class="card" style="margin:12px 14px; padding:12px;">
+        <div style="padding:14px 16px; border-bottom:1px solid var(--border);">
             <form onsubmit="postReply(event, '${escapeHtml(tweetId)}')">
-                <textarea id="replyText" class="form-textarea" placeholder="Post your reply..." style="min-height:60px; margin-bottom:8px;" required></textarea>
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="font-size:11px; color:var(--text-muted);">Tiny ~150B payload</span>
-                    <button type="submit" class="btn" style="padding:6px 14px; font-size:13px;">Reply</button>
+                <textarea id="replyText" class="form-textarea" placeholder="Post your reply" style="min-height:65px; margin-bottom:10px;" required></textarea>
+                <div style="display:flex; justify-content:flex-end;">
+                    <button type="submit" id="replyBtn" class="btn">Reply</button>
                 </div>
             </form>
         </div>`;
 
         if (replies.length > 0) {
-            out += '<div style="padding:8px 14px; font-size:12px; font-weight:700; color:var(--text-muted); border-bottom:1px solid var(--border);">Replies (' + replies.length + '):</div>';
+            out += '<div style="padding:12px 16px; font-size:14px; font-weight:700; color:var(--text-muted); border-bottom:1px solid var(--border);">Replies</div>';
             out += replies.map(renderTweetHtml).join('');
         } else {
-            out += '<div style="padding:20px 14px; text-align:center; color:var(--text-muted); font-size:13px;">No replies yet.</div>';
+            out += '<div style="padding:28px 16px; text-align:center; color:var(--text-muted); font-size:14px;">No replies yet</div>';
         }
 
         threadBox.innerHTML = out;
@@ -829,25 +972,59 @@ function renderThreadView(tweetId) {
 
 function postReply(e, replyToId) {
     e.preventDefault();
-    const text = document.getElementById('replyText').value.trim();
+    const input = document.getElementById('replyText');
+    const btn = document.getElementById('replyBtn');
+    const text = input ? input.value.trim() : '';
     if (!text) return;
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = 'Posting...';
+    }
 
     let payload = JSON.stringify({
         variables: {
             tweet_text: text,
-            reply: { in_reply_to_tweet_id: replyToId },
+            reply: {
+                in_reply_to_tweet_id: replyToId,
+                exclude_reply_user_ids: []
+            },
             dark_request: false,
-            media: { media_entities: [], possibly_sensitive: false }
+            media: {
+                media_entities: [],
+                possibly_sensitive: false
+            },
+            semantic_annotation_ids: []
         },
-        features: {},
-        queryId: "SoVnXZKRa69q3K9Q6gzTSw"
+        features: GRAPHQL_FEATURES,
+        queryId: "wR5Z_lEibLvkew3tF9w-Sg"
     });
 
     if (window.AndroidBridge && AndroidBridge.executePost) {
-        AndroidBridge.executePost("https://x.com/i/api/graphql/SoVnXZKRa69q3K9Q6gzTSw/CreateTweet", payload);
-        alert("Reply submitted!");
-        document.getElementById('replyText').value = '';
-        renderThreadView(replyToId);
+        setTimeout(() => {
+            let resStr = AndroidBridge.executePost("https://x.com/i/api/graphql/wR5Z_lEibLvkew3tF9w-Sg/CreateTweet", payload);
+            let res;
+            try {
+                res = JSON.parse(resStr);
+            } catch(e) {
+                res = { error: true, message: resStr };
+            }
+
+            if (res.errors && res.errors.length > 0) {
+                alert("Reply failed: " + res.errors[0].message);
+                if (btn) { btn.disabled = false; btn.innerHTML = 'Reply'; }
+            } else if (res.error) {
+                alert("Reply failed: " + (res.message || 'Error'));
+                if (btn) { btn.disabled = false; btn.innerHTML = 'Reply'; }
+            } else {
+                showStatus('Reply posted', false, 2500);
+                if (input) input.value = '';
+                renderThreadView(replyToId);
+            }
+        }, 10);
+    } else {
+        alert("Native bridge unavailable");
+        if (btn) { btn.disabled = false; btn.innerHTML = 'Reply'; }
     }
 }
 
@@ -865,9 +1042,9 @@ window.onpopstate = function(e) {
 function renderSearch() {
     const container = document.getElementById('mainContent');
     container.innerHTML = `
-    <div style="padding:14px; border-bottom:1px solid var(--border);">
+    <div style="padding:12px 16px; border-bottom:1px solid var(--border);">
         <form onsubmit="executeSearch(event)" style="display:flex; gap:8px;">
-            <input type="text" id="searchInput" class="form-input" placeholder="Search keywords, #hashtags, from:user..." style="margin-bottom:0;" required>
+            <input type="text" id="searchInput" class="form-input" placeholder="Search keywords, @users, #hashtags" style="margin-bottom:0;" required>
             <button type="submit" class="btn">Search</button>
         </form>
     </div>
@@ -891,26 +1068,25 @@ function executeSearch(e) {
     if (!q) return;
 
     const resDiv = document.getElementById('searchResults');
-    resDiv.innerHTML = '<div class="spinner">Searching Twitter (~4 KB)...</div>';
+    resDiv.innerHTML = '<div class="spinner">Searching...</div>';
 
     let url = `https://x.com/i/api/graphql/vLHjqbDv7TPFMBkIIO1nOA/SearchTimeline?variables=${encodeURIComponent(JSON.stringify({rawQuery: q, count: 15, querySource: 'typed_query'}))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
 
     performAsyncGet(url, (resStr) => {
-        addDataStats(resStr ? resStr.length : 4000, 2000000);
         let parsed = parseTwitterGraphql(resStr);
         if (parsed.error) {
-            resDiv.innerHTML = `<div class="alert-error">${escapeHtml(parsed.error)}</div>`;
+            resDiv.innerHTML = `<div class="card"><div class="card-title" style="color:var(--red);">Error</div><p class="card-desc">${escapeHtml(parsed.error)}</p></div>`;
         } else if (parsed.tweets.length === 0) {
-            resDiv.innerHTML = `<div class="card"><p>No results found for "${escapeHtml(q)}"</p></div>`;
+            resDiv.innerHTML = `<div class="card"><p class="card-desc">No results found for "${escapeHtml(q)}"</p></div>`;
         } else {
             currentTweetsList = parsed.tweets;
             let header = '';
             if (q.startsWith('from:')) {
                 let user = q.replace('from:', '');
                 header = `
-                <div class="profile-card">
-                    <h2 style="font-size:16px;">@${escapeHtml(user)}</h2>
-                    <p style="font-size:12px; color:var(--text-muted);">Recent tweets &bull; Low data mode</p>
+                <div style="padding:14px 16px; border-bottom:1px solid var(--border);">
+                    <div style="font-weight:800; font-size:17px;">@${escapeHtml(user)}</div>
+                    <div style="font-size:13px; color:var(--text-muted);">Recent tweets</div>
                 </div>`;
             }
             resDiv.innerHTML = header + parsed.tweets.map(renderTweetHtml).join('');
@@ -922,12 +1098,11 @@ function renderPost() {
     const container = document.getElementById('mainContent');
     container.innerHTML = `
     <div class="card">
-        <h2>Compose Tweet</h2>
+        <div class="card-title">Compose Post</div>
         <form onsubmit="executePostTweet(event)">
             <textarea id="postText" class="form-textarea" placeholder="What is happening?!" maxlength="280" required></textarea>
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-size:12px; color:var(--text-muted);">Tiny ~150B payload</span>
-                <button type="submit" class="btn">Post 𝕏</button>
+            <div style="display:flex; justify-content:flex-end;">
+                <button type="submit" id="postBtn" class="btn">Post</button>
             </div>
         </form>
     </div>`;
@@ -936,17 +1111,46 @@ function renderPost() {
 function executePostTweet(e) {
     e.preventDefault();
     const text = document.getElementById('postText').value.trim();
+    const btn = document.getElementById('postBtn');
     if (!text) return;
 
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = 'Posting...';
+    }
+
     let payload = JSON.stringify({
-        variables: { tweet_text: text, dark_request: false, media: { media_entities: [], possibly_sensitive: false } },
-        features: {},
-        queryId: "SoVnXZKRa69q3K9Q6gzTSw"
+        variables: {
+            tweet_text: text,
+            dark_request: false,
+            media: {
+                media_entities: [],
+                possibly_sensitive: false
+            },
+            semantic_annotation_ids: []
+        },
+        features: GRAPHQL_FEATURES,
+        queryId: "wR5Z_lEibLvkew3tF9w-Sg"
     });
 
-    let res = AndroidBridge.executePost("https://x.com/i/api/graphql/SoVnXZKRa69q3K9Q6gzTSw/CreateTweet", payload);
-    alert("Post submitted!");
-    nav('feed');
+    if (window.AndroidBridge && AndroidBridge.executePost) {
+        setTimeout(() => {
+            let resStr = AndroidBridge.executePost("https://x.com/i/api/graphql/wR5Z_lEibLvkew3tF9w-Sg/CreateTweet", payload);
+            let res;
+            try { res = JSON.parse(resStr); } catch(err) { res = { error: true, message: resStr }; }
+
+            if (res.errors && res.errors.length > 0) {
+                alert("Post failed: " + res.errors[0].message);
+                if (btn) { btn.disabled = false; btn.innerHTML = 'Post'; }
+            } else if (res.error) {
+                alert("Post failed: " + (res.message || 'Error'));
+                if (btn) { btn.disabled = false; btn.innerHTML = 'Post'; }
+            } else {
+                showStatus('Post published', false, 2500);
+                nav('feed');
+            }
+        }, 10);
+    }
 }
 
 function renderSettings() {
@@ -958,62 +1162,49 @@ function renderSettings() {
         try { isLive = AndroidBridge.isUsingLiveHtml(); } catch(e){}
     }
 
-    let mbSaved = (dataStats.bytesSaved / (1024 * 1024)).toFixed(1);
-    let kbIn = (dataStats.bytesReceived / 1024).toFixed(0);
-
     container.innerHTML = `
     <div class="card">
-        <h2>📊 Data Savings (Airtel FUP Shield)</h2>
-        <p style="font-size:13px; color:var(--green); font-weight:700;">
-            ⚡ Saved ~${mbSaved} MB cellular data (${kbIn} KB transferred)
+        <div class="card-title">App Updates</div>
+        <p class="card-desc">
+            Pull latest improvements and fixes directly from GitHub over-the-air.
         </p>
-        <p style="font-size:12px; color:var(--text-muted); margin-top:4px;">
-            By stripping heavy JavaScript bundles, tracking bloat, and downscaling media to ~3.5 KB WebP on-device.
-        </p>
-    </div>
-
-    <div class="card">
-        <h2>🔄 In-App Live Updates</h2>
-        <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
-            Pull updated UI and parsers directly from GitHub without reinstalling the APK! (~5 KB OTA).
-        </p>
-        <button type="button" class="btn btn-block" onclick="triggerAppUpdate()">
-            🔄 Pull Latest Update from Repo (~5 KB)
+        <button type="button" class="btn btn-secondary btn-block" onclick="triggerAppUpdate()" id="updateBtn">
+            Check for Updates
         </button>
-        <div id="updateStatusText" style="margin-top:8px; font-size:12px; text-align:center; color:var(--accent-light);">
-            ${isLive ? '🟢 Running live updated frontend' : '📦 Running bundled factory version'}
+        <div id="updateStatusText" style="margin-top:10px; font-size:13px; color:var(--text-muted); text-align:center;">
+            ${isLive ? 'Running live updated version' : 'Running bundled APK version'}
         </div>
         ${isLive ? `
-        <button type="button" class="btn btn-secondary btn-block" style="margin-top:8px; font-size:12px;" onclick="resetToFactoryAsset()">
-            ↩️ Revert to Factory Bundled Version
+        <button type="button" class="btn btn-secondary btn-block" style="margin-top:10px; font-size:13px;" onclick="resetToFactoryAsset()">
+            Revert to Bundled Version
         </button>` : ''}
     </div>
 
     <div class="card">
-        <h2>⚙️ Account Credentials</h2>
-        <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
-            100% On-Phone Compute. Your cookies stay private in Android local storage.
+        <div class="card-title">Account Credentials</div>
+        <p class="card-desc">
+            Stored locally in Android private storage.
         </p>
         <form onsubmit="saveSettings(event)">
-            <label style="font-size:12px; color:var(--text-muted);">auth_token cookie</label>
-            <input type="text" id="cfgAuth" value="${escapeHtml(cookies.auth_token)}" class="form-input" placeholder="Paste auth_token from x.com" required>
+            <label style="font-size:13px; color:var(--text-muted); display:block; margin-bottom:4px;">auth_token</label>
+            <input type="text" id="cfgAuth" value="${escapeHtml(cookies.auth_token)}" class="form-input" placeholder="Paste auth_token" required>
 
-            <label style="font-size:12px; color:var(--text-muted);">ct0 (csrf token) cookie</label>
-            <input type="text" id="cfgCt0" value="${escapeHtml(cookies.ct0)}" class="form-input" placeholder="Paste ct0 from x.com" required>
+            <label style="font-size:13px; color:var(--text-muted); display:block; margin-bottom:4px;">ct0 (csrf token)</label>
+            <input type="text" id="cfgCt0" value="${escapeHtml(cookies.ct0)}" class="form-input" placeholder="Paste ct0" required>
 
-            <h3 style="font-size:14px; margin: 12px 0 6px;">Image Mode</h3>
-            <div style="font-size:13px; line-height:1.8; margin-bottom:14px;">
+            <div class="card-title" style="font-size:15px; margin: 16px 0 6px;">Image Mode</div>
+            <div style="font-size:14px; line-height:2; margin-bottom:16px;">
                 <label style="display:block;">
                     <input type="radio" name="imgMode" value="tap" ${cookies.image_mode === 'tap' ? 'checked' : ''}>
-                    <strong>Tap-to-Load (~3.5 KB)</strong> &mdash; Recommended for 64kbps
+                    Tap to load (~3.5 KB)
                 </label>
                 <label style="display:block;">
                     <input type="radio" name="imgMode" value="auto" ${cookies.image_mode === 'auto' ? 'checked' : ''}>
-                    <strong>Auto-load Smart WebP</strong>
+                    Auto-load compressed WebP
                 </label>
                 <label style="display:block;">
                     <input type="radio" name="imgMode" value="off" ${cookies.image_mode === 'off' ? 'checked' : ''}>
-                    <strong>Pure Text Only (0 KB)</strong>
+                    Text only (0 KB)
                 </label>
             </div>
 
@@ -1022,9 +1213,9 @@ function renderSettings() {
     </div>
 
     <div class="card">
-        <h2>💾 Local Cache</h2>
-        <button type="button" class="btn btn-secondary btn-block" onclick="AndroidBridge.clearCache(); alert('Cache cleared!');">
-            Clear Stored Tweets
+        <div class="card-title">Local Cache</div>
+        <button type="button" class="btn btn-secondary btn-block" onclick="AndroidBridge.clearCache(); alert('Cache cleared');">
+            Clear Cached Tweets
         </button>
     </div>`;
 }
@@ -1038,58 +1229,69 @@ function saveSettings(e) {
     if (window.AndroidBridge) {
         AndroidBridge.saveConfig(auth, ct0, mode);
         appConfig = { auth_token: auth, ct0: ct0, image_mode: mode };
-        alert("Configuration saved!");
+        alert("Saved");
         nav('feed');
     }
 }
 
 // In-app hot updater
 function triggerAppUpdate() {
-    showStatusPill('⏳ Checking repo for updates (~5 KB)...', 'updating');
     const statusText = document.getElementById('updateStatusText');
-    if (statusText) statusText.innerHTML = '⏳ Downloading latest code from GitHub...';
+    const updateBtn = document.getElementById('updateBtn');
+    if (statusText) statusText.innerHTML = 'Checking for updates...';
+    if (updateBtn) updateBtn.disabled = true;
 
     const updateUrl = 'https://gist.githubusercontent.com/sovopr/c52e8a1490b3a5415525b27063726bbe/raw/index.html?t=' + Date.now();
 
-    performAsyncGet(updateUrl, (html) => {
-        if (!html || html.length < 500 || !html.includes('<!DOCTYPE html>') || !html.includes('mainContent')) {
-            const fallbackUrl = 'https://raw.githubusercontent.com/sovopr/xlite-android/main/app/src/main/assets/index.html?t=' + Date.now();
-            performAsyncGet(fallbackUrl, (fbHtml) => {
-                if (fbHtml && fbHtml.length > 500 && fbHtml.includes('<!DOCTYPE html>')) {
-                    applyUpdate(fbHtml);
+    // Use native fetch first (clean network stack without Twitter headers)
+    fetch(updateUrl)
+        .then(res => {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.text();
+        })
+        .then(html => {
+            if (html && html.includes('<!DOCTYPE html>') && html.includes('mainContent')) {
+                applyUpdate(html);
+            } else {
+                throw new Error('Invalid update file');
+            }
+        })
+        .catch(err => {
+            // Fallback to bridge with clean headers
+            performAsyncGet(updateUrl, (bridgeHtml) => {
+                if (bridgeHtml && bridgeHtml.includes('<!DOCTYPE html>') && bridgeHtml.includes('mainContent')) {
+                    applyUpdate(bridgeHtml);
                 } else {
-                    showStatusPill('❌ Update check failed (network slow or offline)', 'warning', 4000);
-                    if (statusText) statusText.innerHTML = '❌ Could not pull update. Please try again.';
+                    if (statusText) statusText.innerHTML = 'Update check failed. Please try again.';
+                    if (updateBtn) updateBtn.disabled = false;
                 }
             });
-            return;
-        }
-        applyUpdate(html);
-    });
+        });
 }
 
 function applyUpdate(newHtml) {
+    const statusText = document.getElementById('updateStatusText');
     if (window.AndroidBridge && AndroidBridge.saveLiveHtml) {
         let ok = AndroidBridge.saveLiveHtml(newHtml);
         if (ok) {
-            showStatusPill('✅ Update installed! Reloading app in 1s...', 'success');
-            const statusText = document.getElementById('updateStatusText');
-            if (statusText) statusText.innerHTML = '✅ Update installed! Reloading...';
+            if (statusText) statusText.innerHTML = 'Update installed. Reloading...';
             setTimeout(() => {
                 AndroidBridge.reloadApp();
-            }, 1000);
+            }, 800);
         } else {
-            showStatusPill('⚠️ Failed to save live update', 'warning', 3000);
+            if (statusText) statusText.innerHTML = 'Failed to save update.';
+            const updateBtn = document.getElementById('updateBtn');
+            if (updateBtn) updateBtn.disabled = false;
         }
     } else {
-        alert("Please install v1.0.1 APK to enable in-app hot updates!");
+        alert("Please install v1.0.2 APK once to enable in-app updates.");
     }
 }
 
 function resetToFactoryAsset() {
     if (window.AndroidBridge && AndroidBridge.resetLiveHtml) {
         AndroidBridge.resetLiveHtml();
-        alert("Reset to bundled factory version! Reloading...");
+        alert("Reset to bundled version. Reloading...");
         AndroidBridge.reloadApp();
     }
 }
