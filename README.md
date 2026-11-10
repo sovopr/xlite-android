@@ -15,7 +15,7 @@ A clean, standalone, ultra-low-bandwidth native Android client for 𝕏 (Twitter
 * **Search**: Generates X's per-request transaction header on the phone, using X's current web page materials. Search setup needs an extra download on first use; those materials are reused for 15 minutes.
 * **Data-saving images**: Photos stay unloaded until tapped by default. A tap requests X's thumbnail variant before recompressing it on the phone; higher quality is optional. Actual bytes and loading time depend on X's response and the cellular link.
 
-The repository has a manually triggered **Live X search smoke test** workflow. It reads `XLITE_TEST_AUTH_TOKEN` and `XLITE_TEST_CT0` from GitHub Actions secrets and reports only whether a search response was parsed successfully.
+For a live search check from a developer machine, run `node scripts/live-search-smoke.cjs` with `XLITE_TEST_AUTH_TOKEN` and `XLITE_TEST_CT0` in the environment. X currently rejects GitHub-hosted runner traffic before the test can reach search.
 
 ---
 
