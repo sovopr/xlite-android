@@ -15,6 +15,7 @@ import okhttp3.Response
 import okhttp3.brotli.BrotliInterceptor
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class TwitterBridge(private val context: Context) {
@@ -26,6 +27,7 @@ class TwitterBridge(private val context: Context) {
         .readTimeout(45, TimeUnit.SECONDS)
         .followRedirects(true)
         .build()
+    private val requestExecutor = Executors.newSingleThreadExecutor()
 
     companion object {
         const val BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
@@ -36,7 +38,13 @@ class TwitterBridge(private val context: Context) {
         val parsedUrl = url.toHttpUrlOrNull()
         val isTwitter = parsedUrl?.isHttps == true && parsedUrl.host in setOf("x.com", "api.twitter.com", "twitter.com")
         val builder = Request.Builder().url(url)
-        if (isTwitter) {
+        if (parsedUrl?.host == "x.com" && parsedUrl.encodedPath == "/home") {
+            val authToken = prefs.getString("auth_token", "") ?: ""
+            val ct0 = prefs.getString("ct0", "") ?: ""
+            builder.addHeader("cookie", "auth_token=$authToken; ct0=$ct0")
+                .addHeader("user-agent", USER_AGENT)
+                .addHeader("accept", "text/html")
+        } else if (isTwitter) {
             val authToken = prefs.getString("auth_token", "") ?: ""
             val ct0 = prefs.getString("ct0", "") ?: ""
             val cookieHeader = "auth_token=$authToken; ct0=$ct0"
@@ -116,7 +124,36 @@ class TwitterBridge(private val context: Context) {
             (context as? MainActivity)?.dispatchJsCallback(callbackId)
             return
         }
-        val request = buildRequest(url)
+        runAsyncGet(buildRequest(url), callbackId)
+    }
+
+    @JavascriptInterface
+    fun executeSearchGetAsync(url: String, transactionId: String, callbackId: String) {
+        val parsed = url.toHttpUrlOrNull()
+        val validSearchUrl = parsed?.isHttps == true && parsed.host == "x.com" &&
+            Regex("^/i/api/graphql/[A-Za-z0-9_-]+/SearchTimeline$").matches(parsed.encodedPath)
+        val validId = Regex("^[A-Za-z0-9+/]{90,110}$").matches(transactionId)
+        if (!validSearchUrl || !validId) {
+            saveCache("temp_res_$callbackId", errorPayload("Invalid search request"))
+            (context as? MainActivity)?.dispatchJsCallback(callbackId)
+            return
+        }
+        requestExecutor.execute {
+            try {
+                val request = buildRequest(url).newBuilder()
+                    .header("x-client-transaction-id", transactionId)
+                    .header("x-twitter-auth-type", "OAuth2Session")
+                    .header("referer", "https://x.com/search")
+                    .build()
+                runAsyncGet(request, callbackId)
+            } catch (e: Exception) {
+                saveCache("temp_res_$callbackId", errorPayload(e.message ?: "Search request failed"))
+                (context as? MainActivity)?.dispatchJsCallback(callbackId)
+            }
+        }
+    }
+
+    private fun runAsyncGet(request: Request, callbackId: String) {
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 val errPayload = """{"error": true, "message": ${org.json.JSONObject.quote(e.message ?: "Network error")}}"""
@@ -232,7 +269,9 @@ class TwitterBridge(private val context: Context) {
         val parsed = url.toHttpUrlOrNull() ?: return false
         if (!parsed.isHttps) return false
         return when (parsed.host) {
-            "x.com", "api.twitter.com" -> parsed.encodedPath.startsWith("/i/api/") || parsed.encodedPath.startsWith("/1.1/search/")
+            "x.com" -> parsed.encodedPath == "/home" || parsed.encodedPath.startsWith("/i/api/")
+            "api.twitter.com" -> parsed.encodedPath.startsWith("/i/api/") || parsed.encodedPath.startsWith("/1.1/search/")
+            "abs.twimg.com" -> Regex("^/responsive-web/client-web/ondemand\\.s\\.[0-9a-f]+a\\.js$").matches(parsed.encodedPath)
             "gist.githubusercontent.com" -> parsed.encodedPath.startsWith("/sovopr/c52e8a1490b3a5415525b27063726bbe/")
             else -> false
         }

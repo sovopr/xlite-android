@@ -1,0 +1,21 @@
+name: Live X search smoke test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify X search with test account
+        env:
+          XLITE_TEST_AUTH_TOKEN: ${{ secrets.XLITE_TEST_AUTH_TOKEN }}
+          XLITE_TEST_CT0: ${{ secrets.XLITE_TEST_CT0 }}
+        run: node scripts/live-search-smoke.cjs
