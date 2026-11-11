@@ -103,6 +103,7 @@ assert.match(autoPreview, /retryOriginalPreview\(this\)/, 'failed thumbnail can 
 vm.runInContext("appConfig.image_mode = 'tap'", context);
 
 cache.set('feed_following', JSON.stringify([{ id: 'old', text: 'Old cached post', media: [] }]));
+cache.set('feed_cursor_following', 'saved-cursor');
 vm.runInContext(`currentView = 'feed'; currentTab = 'following'; cursors.following = 'saved-cursor'; loadFeed('following', true)`, context);
 assert.equal(requests.length, 1);
 assert.equal(refresh.disabled, true);
@@ -124,6 +125,28 @@ assert.equal(refresh.disabled, false);
 assert.equal(progress.textContent, 'Updated just now');
 assert.equal(vm.runInContext('cursors.following', context), 'new-cursor');
 assert.match(main.innerHTML, /Load poster frame/);
+vm.runInContext("cursors.following = null; loadFeed('following')", context);
+assert.equal(vm.runInContext('cursors.following', context), 'new-cursor', 'cached feed restores its pagination cursor');
+assert.equal(requests.length, 0, 'recent cache does not trigger another request');
+
+vm.runInContext("loadMoreTweets('following')", context);
+assert.equal(requests.length, 1);
+requests.shift().callback(JSON.stringify({ tweets: [parsed, parsed], nextCursor: 'new-cursor' }));
+assert.equal(vm.runInContext('currentTweetsList.length', context), 1, 'paging does not duplicate existing posts');
+assert.equal(vm.runInContext('cursors.following', context), null, 'a repeated cursor ends pagination');
+assert.equal(progress.textContent, 'No more posts.');
+vm.runInContext("loadMoreTweets('following')", context);
+assert.equal(requests.length, 0, 'an exhausted cursor cannot request the first page again');
+
+vm.runInContext('refreshFeed()', context);
+requests.shift().callback(JSON.stringify({ tweets: [parsed, parsed], nextCursor: 'cursor-a' }));
+assert.equal(vm.runInContext('currentTweetsList.length', context), 1, 'refresh deduplicates a page');
+vm.runInContext("loadMoreTweets('following')", context);
+requests.shift().callback(JSON.stringify({ tweets: [{ id: 'older', text: 'Older post', media: [] }, { id: 'older', text: 'Older post', media: [] }], nextCursor: 'cursor-b' }));
+assert.equal(vm.runInContext('currentTweetsList.length', context), 2, 'paging deduplicates within a page');
+vm.runInContext("loadMoreTweets('following')", context);
+requests.shift().callback(JSON.stringify({ tweets: [parsed], nextCursor: 'cursor-a' }));
+assert.equal(vm.runInContext('cursors.following', context), null, 'a cursor cycle ends pagination');
 
 main.innerHTML += '<div id="page-two">Older page remains visible</div>';
 context.scrollY = 640;

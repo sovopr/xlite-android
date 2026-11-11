@@ -31,6 +31,7 @@ jobs:
         run: |
           node scripts/feed-media.test.cjs
           node scripts/search-pagination.test.cjs
+          node scripts/post-actions.test.cjs
 
       - name: Build Release APK
         run: ./gradlew assembleRelease --stacktrace

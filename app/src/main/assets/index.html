@@ -1279,14 +1279,15 @@ XClientTransaction.ClientTransaction.prototype.getFrames = function (html) {
 let currentTab = 'following';
 let currentFeedOrigin = 'following';
 let cursors = { following: null, foryou: null };
+let usedFeedCursors = { following: new Set(), foryou: new Set() };
 let appConfig = { auth_token: '', ct0: '', image_mode: 'tap' };
 let currentTweetsList = [];
 let allTweetsMap = {};
 let bookmarksCache = null;
 let isFetching = false;
 let pendingCallbacks = {};
-const APP_VERSION = '1.0.14';
-const APP_BUILD = '2026.11.11.1';
+const APP_VERSION = '1.0.15';
+const APP_BUILD = '2026.11.11.2';
 const FEED_REFRESH_MS = 5 * 60 * 1000;
 const FEED_PAGE_SIZE = 6;
 let currentView = 'feed';
@@ -1434,25 +1435,54 @@ function performAsyncGet(url, callback, transactionId) {
     let cbId = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
     pendingCallbacks[cbId] = callback;
 
-    if (transactionId) {
-        if (window.AndroidBridge && typeof AndroidBridge.executeSearchGetAsync === 'function') {
-            AndroidBridge.executeSearchGetAsync(url, transactionId, cbId);
+    try {
+        if (transactionId) {
+            if (window.AndroidBridge && typeof AndroidBridge.executeSearchGetAsync === 'function') {
+                AndroidBridge.executeSearchGetAsync(url, transactionId, cbId);
+            } else {
+                window.__onAsyncFinish(cbId, JSON.stringify({ error: true, message: 'Install the v1.0.6 APK to enable search.' }));
+            }
+        } else if (window.AndroidBridge && AndroidBridge.executeGetAsync) {
+            AndroidBridge.executeGetAsync(url, cbId);
+        } else if (window.AndroidBridge && AndroidBridge.executeGet) {
+            setTimeout(() => {
+                try {
+                    window.__onAsyncFinish(cbId, AndroidBridge.executeGet(url));
+                } catch (error) {
+                    window.__onAsyncFinish(cbId, JSON.stringify({ error: true, message: error.message || 'Request failed' }));
+                }
+            }, 10);
         } else {
-            window.__onAsyncFinish(cbId, JSON.stringify({ error: true, message: 'Install the v1.0.6 APK to enable search.' }));
+            // Fallback to native browser fetch
+            fetch(url)
+                .then(r => r.text())
+                .then(txt => window.__onAsyncFinish(cbId, txt))
+                .catch(err => window.__onAsyncFinish(cbId, JSON.stringify({ error: true, message: err.message })));
         }
-    } else if (window.AndroidBridge && AndroidBridge.executeGetAsync) {
-        AndroidBridge.executeGetAsync(url, cbId);
-    } else if (window.AndroidBridge && AndroidBridge.executeGet) {
-        setTimeout(() => {
-            let res = AndroidBridge.executeGet(url);
-            window.__onAsyncFinish(cbId, res);
-        }, 10);
-    } else {
-        // Fallback to native browser fetch
-        fetch(url)
-            .then(r => r.text())
-            .then(txt => window.__onAsyncFinish(cbId, txt))
-            .catch(err => window.__onAsyncFinish(cbId, JSON.stringify({ error: true, message: err.message })));
+    } catch (error) {
+        window.__onAsyncFinish(cbId, JSON.stringify({ error: true, message: error.message || 'Request failed' }));
+    }
+}
+
+function performAsyncPost(url, payload, callback) {
+    const cbId = 'post_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
+    pendingCallbacks[cbId] = callback;
+    try {
+        if (window.AndroidBridge && typeof AndroidBridge.executePostAsync === 'function') {
+            AndroidBridge.executePostAsync(url, payload, cbId);
+        } else if (window.AndroidBridge && typeof AndroidBridge.executePost === 'function') {
+            setTimeout(() => {
+                try {
+                    window.__onAsyncFinish(cbId, AndroidBridge.executePost(url, payload));
+                } catch (error) {
+                    window.__onAsyncFinish(cbId, JSON.stringify({ error: true, message: error.message || 'Post failed' }));
+                }
+            }, 10);
+        } else {
+            window.__onAsyncFinish(cbId, JSON.stringify({ error: true, message: 'Native bridge unavailable' }));
+        }
+    } catch (error) {
+        window.__onAsyncFinish(cbId, JSON.stringify({ error: true, message: error.message || 'Post failed' }));
     }
 }
 
@@ -2013,6 +2043,8 @@ function loadFeed(feedType, forceRefresh = false) {
             let list = JSON.parse(cachedFeed);
             if (list && list.length > 0) {
                 currentTweetsList = list;
+                cursors[feedType] = window.AndroidBridge ? AndroidBridge.getCache('feed_cursor_' + feedType) || null : null;
+                usedFeedCursors[feedType].clear();
                 list.forEach(t => { if (t && t.id) allTweetsMap[t.id] = t; });
                 container.innerHTML = feedToolbar() + '<div id="feedContainer">' + list.map(renderTweetHtml).join('') + '</div>';
                 hasCached = true;
@@ -2107,30 +2139,44 @@ function applyFeedTweets(feedType, parsed, isPaging) {
         return;
     }
 
-    cursors[feedType] = parsed.nextCursor;
+    const usedCursors = usedFeedCursors[feedType];
+    if (isPaging && cursors[feedType]) usedCursors.add(cursors[feedType]);
+    if (!isPaging) usedCursors.clear();
+    const nextCursor = parsed.nextCursor;
+    cursors[feedType] = nextCursor && !usedCursors.has(nextCursor) ? nextCursor : null;
 
     if (isPaging) {
         const existingIds = new Set(currentTweetsList.map(t => t.id));
-        const freshTweets = parsed.tweets.filter(t => !existingIds.has(t.id));
+        const freshTweets = parsed.tweets.filter(t => {
+            if (existingIds.has(t.id)) return false;
+            existingIds.add(t.id);
+            return true;
+        });
         currentTweetsList.push(...freshTweets);
         parsed.tweets.forEach(t => { if (t && t.id) allTweetsMap[t.id] = t; });
         let feedDiv = document.getElementById('feedContainer');
         if (feedDiv) {
             feedDiv.insertAdjacentHTML('beforeend', freshTweets.map(renderTweetHtml).join(''));
         }
-        setFeedProgress(false, '');
+        setFeedProgress(false, freshTweets.length ? '' : cursors[feedType] ? 'No new posts on this page. Load more to continue.' : 'No more posts.');
         showStatus('', false);
     } else {
-        currentTweetsList = parsed.tweets;
+        const seenIds = new Set();
+        currentTweetsList = parsed.tweets.filter(t => {
+            if (seenIds.has(t.id)) return false;
+            seenIds.add(t.id);
+            return true;
+        });
         parsed.tweets.forEach(t => { if (t && t.id) allTweetsMap[t.id] = t; });
         if (window.AndroidBridge) {
-            AndroidBridge.saveCache('feed_' + feedType, JSON.stringify(parsed.tweets));
-            AndroidBridge.saveCache('feed_cache', JSON.stringify(parsed.tweets));
+            AndroidBridge.saveCache('feed_' + feedType, JSON.stringify(currentTweetsList));
+            AndroidBridge.saveCache('feed_cache', JSON.stringify(currentTweetsList));
+            AndroidBridge.saveCache('feed_cursor_' + feedType, cursors[feedType] || '');
             AndroidBridge.saveCache('feed_updated_' + feedType, String(Date.now()));
         } else {
             localStorage.setItem('feed_updated_' + feedType, String(Date.now()));
         }
-        container.innerHTML = feedToolbar() + '<div id="feedContainer">' + parsed.tweets.map(renderTweetHtml).join('') + '</div>';
+        container.innerHTML = feedToolbar() + '<div id="feedContainer">' + currentTweetsList.map(renderTweetHtml).join('') + '</div>';
         setFeedProgress(false, 'Updated just now');
     }
 
@@ -2176,6 +2222,7 @@ function renderLoadMoreButton(feedType) {
 }
 
 function loadMoreTweets(feedType) {
+    if (!cursors[feedType]) return;
     if (isFetching && isFetching.startsWith(feedType + ':' + viewGeneration + ':')) return;
     const btn = document.querySelector('#loadMoreBox button');
     if (btn) {
@@ -2589,6 +2636,7 @@ function postReply(e, replyToId) {
     const btn = document.getElementById('replyBtn');
     const text = input ? input.value.trim() : '';
     if (!text) return;
+    const submitGeneration = viewGeneration;
 
     if (btn) {
         btn.disabled = true;
@@ -2613,32 +2661,23 @@ function postReply(e, replyToId) {
         queryId: "wR5Z_lEibLvkew3tF9w-Sg"
     });
 
-    if (window.AndroidBridge && AndroidBridge.executePost) {
-        setTimeout(() => {
-            let resStr = AndroidBridge.executePost("https://x.com/i/api/graphql/wR5Z_lEibLvkew3tF9w-Sg/CreateTweet", payload);
-            let res;
-            try {
-                res = JSON.parse(resStr);
-            } catch(e) {
-                res = { error: true, message: resStr };
-            }
-
-            if (res.errors && res.errors.length > 0) {
-                alert("Reply failed: " + res.errors[0].message);
-                if (btn) { btn.disabled = false; btn.innerHTML = 'Reply'; }
-            } else if (res.error) {
-                alert("Reply failed: " + (res.message || 'Error'));
-                if (btn) { btn.disabled = false; btn.innerHTML = 'Reply'; }
-            } else {
-                showStatus('Reply posted', false, 2500);
-                if (input) input.value = '';
-                renderThreadView(replyToId);
-            }
-        }, 10);
-    } else {
-        alert("Native bridge unavailable");
-        if (btn) { btn.disabled = false; btn.innerHTML = 'Reply'; }
-    }
+    performAsyncPost("https://x.com/i/api/graphql/wR5Z_lEibLvkew3tF9w-Sg/CreateTweet", payload, resStr => {
+        let res;
+        try { res = JSON.parse(resStr); } catch(err) { res = { error: true, message: resStr || 'Empty response' }; }
+        const error = res.errors?.[0]?.message || (res.error ? res.message || 'Error' : '');
+        const stillInThread = submitGeneration === viewGeneration && currentView === 'thread';
+        if (error) {
+            if (stillInThread) alert('Reply failed: ' + error);
+            else showStatus('Reply failed: ' + error, true, 5000);
+            if (btn) { btn.disabled = false; btn.innerHTML = 'Reply'; }
+            return;
+        }
+        showStatus('Reply posted', false, 2500);
+        if (stillInThread) {
+            if (input) input.value = '';
+            renderThreadView(replyToId);
+        }
+    });
 }
 
 function renderSearchResults(q, tweets, resDiv) {
@@ -2676,9 +2715,11 @@ function renderPost() {
 
 function executePostTweet(e) {
     e.preventDefault();
-    const text = document.getElementById('postText').value.trim();
+    const input = document.getElementById('postText');
+    const text = input ? input.value.trim() : '';
     const btn = document.getElementById('postBtn');
     if (!text) return;
+    const submitGeneration = viewGeneration;
 
     if (btn) {
         btn.disabled = true;
@@ -2699,24 +2740,20 @@ function executePostTweet(e) {
         queryId: "wR5Z_lEibLvkew3tF9w-Sg"
     });
 
-    if (window.AndroidBridge && AndroidBridge.executePost) {
-        setTimeout(() => {
-            let resStr = AndroidBridge.executePost("https://x.com/i/api/graphql/wR5Z_lEibLvkew3tF9w-Sg/CreateTweet", payload);
-            let res;
-            try { res = JSON.parse(resStr); } catch(err) { res = { error: true, message: resStr }; }
-
-            if (res.errors && res.errors.length > 0) {
-                alert("Post failed: " + res.errors[0].message);
-                if (btn) { btn.disabled = false; btn.innerHTML = 'Post'; }
-            } else if (res.error) {
-                alert("Post failed: " + (res.message || 'Error'));
-                if (btn) { btn.disabled = false; btn.innerHTML = 'Post'; }
-            } else {
-                showStatus('Post published', false, 2500);
-                nav('feed');
-            }
-        }, 10);
-    }
+    performAsyncPost("https://x.com/i/api/graphql/wR5Z_lEibLvkew3tF9w-Sg/CreateTweet", payload, resStr => {
+        let res;
+        try { res = JSON.parse(resStr); } catch(err) { res = { error: true, message: resStr || 'Empty response' }; }
+        const error = res.errors?.[0]?.message || (res.error ? res.message || 'Error' : '');
+        const stillComposing = submitGeneration === viewGeneration && currentView === 'post';
+        if (error) {
+            if (stillComposing) alert('Post failed: ' + error);
+            else showStatus('Post failed: ' + error, true, 5000);
+            if (btn) { btn.disabled = false; btn.innerHTML = 'Post'; }
+            return;
+        }
+        showStatus('Post published', false, 2500);
+        if (stillComposing) nav('feed');
+    });
 }
 
 function renderSettings() {

@@ -11,8 +11,8 @@ android {
         applicationId = "com.sovopr.xlite"
         minSdk = 24
         targetSdk = 34
-        versionCode = 13
-        versionName = "1.0.14"
+        versionCode = 14
+        versionName = "1.0.15"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

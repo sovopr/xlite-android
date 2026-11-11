@@ -124,7 +124,7 @@ class TwitterBridge(private val context: Context) {
             (context as? MainActivity)?.dispatchJsCallback(callbackId)
             return
         }
-        runAsyncGet(buildRequest(url), callbackId)
+        runAsyncRequest(buildRequest(url), callbackId)
     }
 
     @JavascriptInterface
@@ -145,7 +145,7 @@ class TwitterBridge(private val context: Context) {
                     .header("x-twitter-auth-type", "OAuth2Session")
                     .header("referer", "https://x.com/search")
                     .build()
-                runAsyncGet(request, callbackId)
+                runAsyncRequest(request, callbackId)
             } catch (e: Exception) {
                 saveCache("temp_res_$callbackId", errorPayload(e.message ?: "Search request failed"))
                 (context as? MainActivity)?.dispatchJsCallback(callbackId)
@@ -153,34 +153,39 @@ class TwitterBridge(private val context: Context) {
         }
     }
 
-    private fun runAsyncGet(request: Request, callbackId: String) {
+    private fun finishAsyncRequest(callbackId: String, payload: String) {
+        saveCache("temp_res_$callbackId", payload)
+        (context as? MainActivity)?.dispatchJsCallback(callbackId)
+    }
+
+    private fun runAsyncRequest(request: Request, callbackId: String) {
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                val errPayload = """{"error": true, "message": ${org.json.JSONObject.quote(e.message ?: "Network error")}}"""
-                saveCache("temp_res_$callbackId", errPayload)
-                (context as? MainActivity)?.dispatchJsCallback(callbackId)
+                finishAsyncRequest(callbackId, errorPayload(e.message ?: "Network error"))
             }
 
             override fun onResponse(call: Call, response: Response) {
-                response.use { resp ->
-                    val body = resp.body?.string() ?: ""
-                    val payload = if (resp.isSuccessful) {
-                        body
-                    } else {
-                        """{"error": true, "status": ${resp.code}, "message": ${JSONObject.quote(body.take(200).ifBlank { "HTTP ${resp.code} from X" })}}"""
+                val payload = try {
+                    response.use { resp ->
+                        val body = resp.body?.string() ?: ""
+                        if (resp.isSuccessful) {
+                            body
+                        } else {
+                            """{"error": true, "status": ${resp.code}, "message": ${JSONObject.quote(body.take(200).ifBlank { "HTTP ${resp.code} from X" })}}"""
+                        }
                     }
-                    saveCache("temp_res_$callbackId", payload)
-                    (context as? MainActivity)?.dispatchJsCallback(callbackId)
+                } catch (e: Exception) {
+                    errorPayload(e.message ?: "Could not finish reading X response")
                 }
+                finishAsyncRequest(callbackId, payload)
             }
         })
     }
 
-    @JavascriptInterface
-    fun executePost(url: String, jsonPayload: String): String {
+    private fun buildPostRequest(url: String, jsonPayload: String): Request? {
         val parsedUrl = url.toHttpUrlOrNull()
         if (parsedUrl?.isHttps != true || parsedUrl.host != "x.com" || !parsedUrl.encodedPath.endsWith("/CreateTweet")) {
-            return errorPayload("Unsupported post URL")
+            return null
         }
         val authToken = prefs.getString("auth_token", "") ?: ""
         val ct0 = prefs.getString("ct0", "") ?: ""
@@ -189,7 +194,7 @@ class TwitterBridge(private val context: Context) {
         val mediaType = "application/json; charset=utf-8".toMediaType()
         val requestBody = jsonPayload.toRequestBody(mediaType)
 
-        val request = Request.Builder()
+        return Request.Builder()
             .url(url)
             .post(requestBody)
             .addHeader("authorization", "Bearer $BEARER_TOKEN")
@@ -200,6 +205,21 @@ class TwitterBridge(private val context: Context) {
             .addHeader("x-twitter-active-user", "yes")
             .addHeader("x-twitter-client-language", "en")
             .build()
+    }
+
+    @JavascriptInterface
+    fun executePostAsync(url: String, jsonPayload: String, callbackId: String) {
+        val request = buildPostRequest(url, jsonPayload)
+        if (request == null) {
+            finishAsyncRequest(callbackId, errorPayload("Unsupported post URL"))
+            return
+        }
+        runAsyncRequest(request, callbackId)
+    }
+
+    @JavascriptInterface
+    fun executePost(url: String, jsonPayload: String): String {
+        val request = buildPostRequest(url, jsonPayload) ?: return errorPayload("Unsupported post URL")
 
         return try {
             client.newCall(request).execute().use { response ->
@@ -218,12 +238,18 @@ class TwitterBridge(private val context: Context) {
     @JavascriptInterface
     fun saveLiveHtml(htmlContent: String): Boolean {
         return try {
-            if (!htmlContent.contains("<html") || !htmlContent.contains("mainContent")) {
+            if (!htmlContent.contains("<html") || !htmlContent.contains("mainContent") ||
+                !htmlContent.trimEnd().endsWith("</html>", ignoreCase = true)) {
                 return false
             }
             val liveFile = File(context.filesDir, "live_index.html")
-            liveFile.writeText(htmlContent, Charsets.UTF_8)
-            true
+            val tempFile = File.createTempFile("live_index_", ".tmp", context.filesDir)
+            try {
+                tempFile.writeText(htmlContent, Charsets.UTF_8)
+                tempFile.renameTo(liveFile)
+            } finally {
+                tempFile.delete()
+            }
         } catch (e: Exception) {
             false
         }

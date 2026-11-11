@@ -31,7 +31,7 @@ These cookies grant access to your X account. Keep them private. X Lite stores t
 
 ### APK version and web interface version
 
-Settings shows both versions. A web interface update changes the screens and JavaScript but does not replace the installed APK. For example, **Web Interface v1.0.14** can run inside **Installed APK v1.0.2**. Image retry requests are fresh even on older APKs. Native Android changes and the launcher icon require a new APK; the blue halo launcher icon is included in the v1.0.12 and later APKs. The v1.0.14 APK also avoids caching failed image responses and repairs partial image-cache files.
+Settings shows both versions. A web interface update changes the screens and JavaScript but does not replace the installed APK. For example, **Web Interface v1.0.15** can run inside **Installed APK v1.0.2**. Image retry requests are fresh even on older APKs. Native Android changes and the launcher icon require a new APK; the blue halo launcher icon is included in the v1.0.12 and later APKs. The v1.0.14 APK avoids caching failed image responses and repairs partial image-cache files. The v1.0.15 APK posts and replies without blocking the screen while a slow request is in progress. It also disables Android backup of the stored X session cookies.
 
 APK builds from the current GitHub workflow use a CI-generated debug signing key. A new download may therefore fail to install over an older one. Use the in-app updater for web interface fixes. If an APK replacement is necessary, save your cookie values before uninstalling; Android removes the app's local data on uninstall.
 
