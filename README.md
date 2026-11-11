@@ -10,11 +10,11 @@ The app is designed with Airtel's throttled 64 kbps FUP connection in mind. Actu
 
 | Feature | Behavior |
 | --- | --- |
-| Home | Following and For You timelines, with cached posts for offline reading and a visible refresh indicator. |
+| Home | Following and For You timelines, with cached posts for offline reading, a visible refresh indicator, and the same feed position when returning from a conversation. |
 | Search | Keyword, account, and hashtag search, eight results at a time with **Load More**. |
 | Conversations | Open a post, read replies, and reply. |
 | Posting | Compose a text post. |
-| Images | Previews load on tap by default; image loading can also be turned off or made automatic. |
+| Images | Previews load on tap by default; image loading can also be turned off or made automatic. Failed previews can be retried. |
 | Video and GIFs | Small poster frames on tap, plus available descriptions and duration. Video files are not fetched in the feed. |
 | Updates | Install web interface fixes from **Settings → Check for Updates**. |
 
@@ -31,7 +31,7 @@ These cookies grant access to your X account. Keep them private. X Lite stores t
 
 ### APK version and web interface version
 
-Settings shows both versions. A web interface update changes the screens and JavaScript but does not replace the installed APK. For example, **Web Interface v1.0.13** can run inside **Installed APK v1.0.2**. Native Android changes and the launcher icon require a new APK; the blue halo launcher icon is included in the v1.0.12 and later APKs.
+Settings shows both versions. A web interface update changes the screens and JavaScript but does not replace the installed APK. For example, **Web Interface v1.0.14** can run inside **Installed APK v1.0.2**. Native Android changes and the launcher icon require a new APK; the blue halo launcher icon is included in the v1.0.12 and later APKs. The v1.0.14 APK also avoids caching failed image responses and repairs partial image-cache files.
 
 APK builds from the current GitHub workflow use a CI-generated debug signing key. A new download may therefore fail to install over an older one. Use the in-app updater for web interface fixes. If an APK replacement is necessary, save your cookie values before uninstalling; Android removes the app's local data on uninstall.
 

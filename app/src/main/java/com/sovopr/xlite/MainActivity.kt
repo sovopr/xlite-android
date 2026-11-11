@@ -71,7 +71,11 @@ class MainActivity : AppCompatActivity() {
                     val targetUrl = url.getQueryParameter("url") ?: return null
                     val mode = url.getQueryParameter("mode") ?: "thumb"
                     return handleImageRequest(targetUrl, mode, imgCacheDir)
-                        ?: WebResourceResponse("image/webp", "UTF-8", ByteArrayInputStream(ByteArray(0)))
+                        ?: WebResourceResponse(
+                            "image/webp", "UTF-8", 503, "Image unavailable",
+                            mapOf("Cache-Control" to "no-store"),
+                            ByteArrayInputStream(ByteArray(0))
+                        )
                 }
                 return super.shouldInterceptRequest(view, request)
             }
@@ -142,11 +146,14 @@ class MainActivity : AppCompatActivity() {
         val cacheFile = File(cacheDir, "$hash.webp")
 
         if (cacheFile.exists()) {
-            return try {
-                WebResourceResponse("image/webp", "UTF-8", FileInputStream(cacheFile))
-            } catch (e: Exception) {
-                null
-            }
+            try {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(cacheFile.absolutePath, bounds)
+                if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+                    return WebResourceResponse("image/webp", "UTF-8", FileInputStream(cacheFile))
+                }
+            } catch (_: Exception) { }
+            cacheFile.delete()
         }
 
         return try {
@@ -214,11 +221,18 @@ class MainActivity : AppCompatActivity() {
             } else {
                 Bitmap.CompressFormat.WEBP
             }
-            scaled.compress(format, quality, bos)
+            if (!scaled.compress(format, quality, bos)) return null
             val webpBytes = bos.toByteArray()
+            if (webpBytes.isEmpty()) return null
 
             try {
-                cacheFile.writeBytes(webpBytes)
+                val tempFile = File.createTempFile("image-", ".tmp", cacheDir)
+                try {
+                    tempFile.writeBytes(webpBytes)
+                    tempFile.renameTo(cacheFile)
+                } finally {
+                    tempFile.delete()
+                }
             } catch (_: Exception) {}
 
             WebResourceResponse("image/webp", "UTF-8", ByteArrayInputStream(webpBytes))

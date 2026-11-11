@@ -1285,8 +1285,8 @@ let allTweetsMap = {};
 let bookmarksCache = null;
 let isFetching = false;
 let pendingCallbacks = {};
-const APP_VERSION = '1.0.13';
-const APP_BUILD = '2026.11.10.14';
+const APP_VERSION = '1.0.14';
+const APP_BUILD = '2026.11.11.1';
 const FEED_REFRESH_MS = 5 * 60 * 1000;
 const FEED_PAGE_SIZE = 6;
 let currentView = 'feed';
@@ -1296,6 +1296,13 @@ let searchState = null;
 let threadOriginView = 'feed';
 let savedSearchMarkup = '';
 let savedSearchScrollY = 0;
+let savedFeedMarkup = '';
+let savedFeedNodes = null;
+let savedFeedScrollY = 0;
+let savedFeedTab = '';
+let savedFeedRequestInterrupted = false;
+let imageRequestSequence = 0;
+const imageRequestNonce = Date.now().toString(36);
 let searchTransactionClient = null;
 let searchTransactionFetchedAt = 0;
 let searchTransactionWaiters = [];
@@ -1472,6 +1479,11 @@ function showStatus(text, isError, autoHideMs) {
 }
 
 function nav(view) {
+    const returningFromThread = currentView === 'thread' && threadOriginView === 'feed';
+    if (currentView === 'thread' && view !== 'feed') {
+        savedFeedMarkup = '';
+        savedFeedNodes = null;
+    }
     currentView = view;
     viewGeneration++;
     document.querySelectorAll('.bottom-item').forEach((el, idx) => {
@@ -1482,7 +1494,7 @@ function nav(view) {
     tabNav.style.display = (view === 'feed') ? 'flex' : 'none';
 
     if (view === 'feed') {
-        restoreFeedView(currentTab);
+        restoreFeedView(currentTab, returningFromThread);
     } else {
         showStatus('', false);
         if (view === 'search') renderSearch();
@@ -1492,6 +1504,8 @@ function nav(view) {
 }
 
 function switchFeed(tab) {
+    savedFeedMarkup = '';
+    savedFeedNodes = null;
     currentView = 'feed';
     viewGeneration++;
     currentTab = tab;
@@ -1576,11 +1590,20 @@ function copyTweetLink(screenName, id) {
 }
 
 // In-place HD image loader
+function localImageUrl(url, mode, fresh = false) {
+    const base = 'https://local.xlite/img?url=' + encodeURIComponent(url) + '&mode=' + mode;
+    return fresh ? base + '&retry=' + imageRequestNonce + '-' + (++imageRequestSequence) : base;
+}
+
 function loadHdImg(btn, url, imgId) {
     btn.innerHTML = 'Loading HD...';
     btn.disabled = true;
     const img = document.getElementById(imgId);
-    if (!img) return;
+    if (!img) {
+        btn.innerHTML = 'Retry HD';
+        btn.disabled = false;
+        return;
+    }
 
     const hdImg = new Image();
     hdImg.onload = function() {
@@ -1592,7 +1615,7 @@ function loadHdImg(btn, url, imgId) {
         btn.innerHTML = 'Retry HD';
         btn.disabled = false;
     };
-    hdImg.src = 'https://local.xlite/img?url=' + encodeURIComponent(url) + '&mode=hd';
+    hdImg.src = localImageUrl(url, 'hd', true);
 }
 
 function loadThumbImg(btn, url, imgId, hdUrl = url) {
@@ -1616,19 +1639,29 @@ function loadThumbImg(btn, url, imgId, hdUrl = url) {
     img.onerror = function() {
         if (url !== hdUrl && !img.dataset.originalRetried) {
             img.dataset.originalRetried = '1';
-            img.src = 'https://local.xlite/img?url=' + encodeURIComponent(hdUrl) + '&mode=thumb';
+            img.src = localImageUrl(hdUrl, 'thumb', true);
             return;
         }
         btn.innerHTML = 'Retry loading';
         btn.disabled = false;
     };
-    img.src = 'https://local.xlite/img?url=' + encodeURIComponent(url) + '&mode=thumb';
+    img.src = localImageUrl(url, 'thumb', true);
 }
 
 function retryOriginalPreview(img) {
-    if (img.dataset.originalRetried || !img.dataset.originalUrl || img.dataset.originalUrl === img.dataset.previewUrl) return;
-    img.dataset.originalRetried = '1';
-    img.src = 'https://local.xlite/img?url=' + encodeURIComponent(img.dataset.originalUrl) + '&mode=thumb';
+    const originalUrl = img.dataset.originalUrl || img.dataset.previewUrl;
+    if (!img.dataset.originalRetried && originalUrl !== img.dataset.previewUrl) {
+        img.dataset.originalRetried = '1';
+        img.src = localImageUrl(originalUrl, 'thumb', true);
+        return;
+    }
+    if (!img.parentElement) return;
+    const retryButton = document.createElement('button');
+    retryButton.type = 'button';
+    retryButton.className = 'btn btn-secondary btn-block';
+    retryButton.textContent = 'Retry small preview';
+    retryButton.onclick = () => loadThumbImg(retryButton, img.dataset.previewUrl, img.id, originalUrl);
+    img.replaceWith(retryButton);
 }
 
 function mediaPreviewUrl(url, isVideo) {
@@ -1658,7 +1691,7 @@ function renderTweetHtml(tw) {
             if (appConfig.image_mode === 'auto') {
                 mediaHtml += `
                 <div>
-                    <img id="${imgId}" src="https://local.xlite/img?url=${encodeURIComponent(previewUrl)}&mode=thumb" class="tweet-img" loading="lazy" data-preview-url="${escapeHtml(previewUrl)}" data-original-url="${escapeHtml(m.url)}" onerror="retryOriginalPreview(this)" />
+                    <img id="${imgId}" src="${localImageUrl(previewUrl, 'thumb')}" class="tweet-img" loading="lazy" data-preview-url="${escapeHtml(previewUrl)}" data-original-url="${escapeHtml(m.url)}" onerror="retryOriginalPreview(this)" />
                     <div style="text-align:right; margin-top:4px;">
                         <button type="button" data-url="${escapeHtml(m.url)}" onclick="loadHdImg(this, this.dataset.url, '${imgId}')" style="font-size:12px; color:var(--text-muted); background:none; border:none; cursor:pointer; padding:4px 8px;">
                             HD View
@@ -2149,6 +2182,16 @@ function loadMoreTweets(feedType) {
 function viewThread(tweetId) {
     if (currentView !== 'thread') {
         threadOriginView = currentView;
+        if (currentView === 'feed') {
+            const feedContainer = document.getElementById('mainContent');
+            savedFeedMarkup = feedContainer.innerHTML;
+            savedFeedNodes = document.createDocumentFragment();
+            while (feedContainer.firstChild) savedFeedNodes.appendChild(feedContainer.firstChild);
+            savedFeedScrollY = window.scrollY;
+            savedFeedTab = currentTab;
+            savedFeedRequestInterrupted = !!(isFetching && isFetching.startsWith(currentTab + ':' + viewGeneration + ':'));
+            if (savedFeedRequestInterrupted) isFetching = false;
+        }
         if (currentView === 'search') {
             if (searchState && searchState.loading) {
                 searchState.loading = false;
@@ -2259,11 +2302,11 @@ function goBackToFeed() {
     if (window.history.state && window.history.state.view === 'thread') {
         window.history.back();
     } else {
-        restoreFeedView(currentFeedOrigin);
+        restoreFeedView(currentFeedOrigin, threadOriginView === 'feed');
     }
 }
 
-function restoreFeedView(targetTab) {
+function restoreFeedView(targetTab, fromThread = false) {
     currentView = 'feed';
     viewGeneration++;
     currentTab = targetTab || currentTab || 'following';
@@ -2275,6 +2318,31 @@ function restoreFeedView(targetTab) {
     if (window.location.hash.startsWith('#thread-')) {
         try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch(e){}
     }
+    if (fromThread && savedFeedMarkup && savedFeedTab === currentTab && savedFeedMarkup.includes('id="feedContainer"')) {
+        const scrollY = savedFeedScrollY;
+        const container = document.getElementById('mainContent');
+        if (savedFeedNodes && savedFeedNodes.firstChild) {
+            container.innerHTML = '';
+            container.appendChild(savedFeedNodes);
+        } else {
+            container.innerHTML = savedFeedMarkup;
+        }
+        if (savedFeedRequestInterrupted) {
+            setFeedProgress(false, 'Loading interrupted. Tap Refresh to retry.');
+            const loadMoreButton = document.querySelector('#loadMoreBox button');
+            if (loadMoreButton) {
+                loadMoreButton.disabled = false;
+                loadMoreButton.textContent = 'Load More';
+            }
+        }
+        savedFeedMarkup = '';
+        savedFeedNodes = null;
+        savedFeedRequestInterrupted = false;
+        window.scrollTo(0, scrollY);
+        return;
+    }
+    savedFeedMarkup = '';
+    savedFeedNodes = null;
     loadFeed(currentTab);
 }
 
@@ -2295,7 +2363,7 @@ window.onpopstate = function(e) {
         window.scrollTo(0, savedSearchScrollY);
     } else {
         let origin = (e.state && e.state.originTab) ? e.state.originTab : currentFeedOrigin || currentTab;
-        restoreFeedView(origin);
+        restoreFeedView(origin, currentView === 'thread' && threadOriginView === 'feed');
     }
 };
 
