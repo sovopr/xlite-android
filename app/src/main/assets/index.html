@@ -1591,11 +1591,14 @@ function copyTweetLink(screenName, id) {
 
 // In-place HD image loader
 function localImageUrl(url, mode, fresh = false) {
-    const base = 'https://local.xlite/img?url=' + encodeURIComponent(url) + '&mode=' + mode;
-    return fresh ? base + '&retry=' + imageRequestNonce + '-' + (++imageRequestSequence) : base;
+    const attempt = fresh ? imageRequestNonce + '-' + (++imageRequestSequence) : '';
+    const target = fresh ? url + (url.includes('#') ? '&' : '#') + 'xlite-retry=' + attempt : url;
+    const base = 'https://local.xlite/img?url=' + encodeURIComponent(target) + '&mode=' + mode;
+    return fresh ? base + '&retry=' + attempt : base;
 }
 
 function loadHdImg(btn, url, imgId) {
+    const fresh = btn.dataset.retryRequested === '1';
     btn.innerHTML = 'Loading HD...';
     btn.disabled = true;
     const img = document.getElementById(imgId);
@@ -1614,11 +1617,13 @@ function loadHdImg(btn, url, imgId) {
     hdImg.onerror = function() {
         btn.innerHTML = 'Retry HD';
         btn.disabled = false;
+        btn.dataset.retryRequested = '1';
     };
-    hdImg.src = localImageUrl(url, 'hd', true);
+    hdImg.src = localImageUrl(url, 'hd', fresh);
 }
 
 function loadThumbImg(btn, url, imgId, hdUrl = url) {
+    const fresh = btn.dataset.retryRequested === '1';
     btn.innerHTML = 'Loading image...';
     btn.disabled = true;
     const img = document.createElement('img');
@@ -1644,8 +1649,9 @@ function loadThumbImg(btn, url, imgId, hdUrl = url) {
         }
         btn.innerHTML = 'Retry loading';
         btn.disabled = false;
+        btn.dataset.retryRequested = '1';
     };
-    img.src = localImageUrl(url, 'thumb', true);
+    img.src = localImageUrl(url, 'thumb', fresh);
 }
 
 function retryOriginalPreview(img) {
@@ -1660,6 +1666,7 @@ function retryOriginalPreview(img) {
     retryButton.type = 'button';
     retryButton.className = 'btn btn-secondary btn-block';
     retryButton.textContent = 'Retry small preview';
+    retryButton.dataset.retryRequested = '1';
     retryButton.onclick = () => loadThumbImg(retryButton, img.dataset.previewUrl, img.id, originalUrl);
     img.replaceWith(retryButton);
 }

@@ -154,6 +154,7 @@ const firstAttempt = vm.runInContext(`localImageUrl(${JSON.stringify(poster)}, '
 const secondAttempt = vm.runInContext(`localImageUrl(${JSON.stringify(poster)}, 'thumb', true)`, context);
 assert.notEqual(firstAttempt, secondAttempt, 'each retry bypasses a cached failed response');
 assert.match(firstAttempt, /&retry=/);
+assert.match(decodeURIComponent(new URL(firstAttempt).searchParams.get('url')), /#xlite-retry=/, 'retry also bypasses an old APK image cache');
 const images = [];
 context.document.createElement = tag => {
     if (tag === 'img') {
@@ -161,10 +162,10 @@ context.document.createElement = tag => {
         images.push(img);
         return img;
     }
-    if (tag === 'button') return {};
+    if (tag === 'button') return { dataset: {} };
     throw new Error(`unexpected element ${tag}`);
 };
-const imageButton = { innerHTML: '', disabled: false, parentElement: {} };
+const imageButton = { innerHTML: '', disabled: false, dataset: {}, parentElement: {} };
 context.testImageButton = imageButton;
 vm.runInContext(`loadThumbImg(testImageButton, ${JSON.stringify(poster)}, 'test-image')`, context);
 const failedUrl = images[0].src;
@@ -185,6 +186,7 @@ vm.runInContext('retryOriginalPreview(testAutoImage)', context);
 assert.match(autoImage.src, /&retry=/, 'automatic preview tries the original once');
 vm.runInContext('retryOriginalPreview(testAutoImage)', context);
 assert.equal(autoImage.retryButton.textContent, 'Retry small preview');
+assert.equal(autoImage.retryButton.dataset.retryRequested, '1');
 assert.equal(typeof autoImage.retryButton.onclick, 'function');
 
 console.log('Feed navigation, refresh, and image retry tests passed.');
