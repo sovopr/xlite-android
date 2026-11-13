@@ -28,6 +28,12 @@ class MainActivity : AppCompatActivity() {
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
         .build()
+    private val hdPrimaryClient = client.newBuilder()
+        .readTimeout(35, TimeUnit.SECONDS)
+        .build()
+    private val hdFallbackClient = client.newBuilder()
+        .readTimeout(60, TimeUnit.SECONDS)
+        .build()
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -138,6 +144,78 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun fetchImageBytes(httpClient: OkHttpClient, upstreamUrl: String, maxBytes: Int): ByteArray? {
+        return try {
+            val req = Request.Builder()
+                .url(upstreamUrl)
+                .addHeader("User-Agent", TwitterBridge.USER_AGENT)
+                .build()
+            httpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val body = resp.body ?: return null
+                if (body.contentLength() > maxBytes) return null
+                val output = ByteArrayOutputStream()
+                body.byteStream().use { input ->
+                    val buffer = ByteArray(8192)
+                    while (true) {
+                        val size = input.read(buffer)
+                        if (size < 0) break
+                        if (output.size() + size > maxBytes) return null
+                        output.write(buffer, 0, size)
+                    }
+                }
+                val bytes = output.toByteArray()
+                if (bytes.isEmpty()) null else bytes
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun buildImageCandidateUrls(imageUrl: Uri, mode: String, imageFormat: String): List<String> {
+        val rawPath = imageUrl.path ?: ""
+        val cleanPath = rawPath.replace(Regex(":(thumb|small|medium|large|orig)$"), "")
+        val baseFormat = if (imageFormat == "jpeg") "jpg" else imageFormat
+
+        if (cleanPath.startsWith("/media/")) {
+            val baseBuilder = { imageUrl.buildUpon().path(cleanPath).clearQuery() }
+            return if (mode == "hd") {
+                listOf(
+                    baseBuilder().appendQueryParameter("format", "webp").appendQueryParameter("name", "medium").build().toString(),
+                    baseBuilder().appendQueryParameter("format", baseFormat).appendQueryParameter("name", "medium").build().toString(),
+                    baseBuilder().appendQueryParameter("format", "webp").appendQueryParameter("name", "small").build().toString(),
+                    baseBuilder().appendQueryParameter("format", baseFormat).appendQueryParameter("name", "small").build().toString()
+                ).distinct()
+            } else {
+                listOf(
+                    baseBuilder().appendQueryParameter("format", "webp").appendQueryParameter("name", "thumb").build().toString(),
+                    baseBuilder().appendQueryParameter("format", baseFormat).appendQueryParameter("name", "thumb").build().toString()
+                ).distinct()
+            }
+        }
+
+        val isVideoThumb = cleanPath.startsWith("/amplify_video_thumb/") ||
+            cleanPath.startsWith("/ext_tw_video_thumb/") ||
+            cleanPath.startsWith("/tweet_video_thumb/")
+        if (isVideoThumb) {
+            val pathUrl = { p: String -> imageUrl.buildUpon().path(p).clearQuery().build().toString() }
+            return if (mode == "hd") {
+                listOf(
+                    pathUrl("$cleanPath:medium"),
+                    pathUrl("$cleanPath:small"),
+                    pathUrl(cleanPath)
+                ).distinct()
+            } else {
+                listOf(
+                    pathUrl("$cleanPath:thumb"),
+                    pathUrl(cleanPath)
+                ).distinct()
+            }
+        }
+
+        return listOf(imageUrl.toString())
+    }
+
     private fun handleImageRequest(targetUrl: String, mode: String, cacheDir: File): WebResourceResponse? {
         val imageUrl = try { Uri.parse(targetUrl) } catch (_: Exception) { return null }
         if (imageUrl.scheme != "https" || imageUrl.host != "pbs.twimg.com") return null
@@ -157,42 +235,28 @@ class MainActivity : AppCompatActivity() {
         }
 
         return try {
-            // Fetch X's small variant over cellular. Recompressing an original after
+            // Fetch X's small/webp variant over cellular. Recompressing an original after
             // downloading it does not save any mobile data.
-            val imageFormat = imageUrl.getQueryParameter("format")
-                ?: imageUrl.lastPathSegment?.substringAfterLast('.', "jpg")
-                ?: "jpg"
+            val cleanLastSegment = (imageUrl.lastPathSegment ?: "")
+                .replace(Regex(":(thumb|small|medium|large|orig)$"), "")
+            val imageFormat = (imageUrl.getQueryParameter("format")
+                ?: cleanLastSegment.substringAfterLast('.', "jpg"))
+                .lowercase()
             if (imageFormat !in setOf("jpg", "jpeg", "png", "webp")) return null
-            val upstreamUrl = if (imageUrl.path?.startsWith("/media/") == true) {
-                imageUrl.buildUpon().clearQuery()
-                    .appendQueryParameter("format", if (imageFormat == "jpeg") "jpg" else imageFormat)
-                    .appendQueryParameter("name", if (mode == "hd") "medium" else "thumb")
-                    .build().toString()
-            } else {
-                targetUrl
-            }
-            val maxBytes = if (mode == "hd") 512 * 1024 else 96 * 1024
-            val req = Request.Builder()
-                .url(upstreamUrl)
-                .addHeader("User-Agent", TwitterBridge.USER_AGENT)
-                .build()
 
-            val rawBytes = client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return null
-                val body = resp.body ?: return null
-                if (body.contentLength() > maxBytes) return null
-                val output = ByteArrayOutputStream()
-                body.byteStream().use { input ->
-                    val buffer = ByteArray(8192)
-                    while (true) {
-                        val size = input.read(buffer)
-                        if (size < 0) break
-                        if (output.size() + size > maxBytes) return null
-                        output.write(buffer, 0, size)
-                    }
+            val maxBytes = if (mode == "hd") 1024 * 1024 else 256 * 1024
+            val candidates = buildImageCandidateUrls(imageUrl, mode, imageFormat)
+            var rawBytes: ByteArray? = null
+            for ((index, candidate) in candidates.withIndex()) {
+                val activeClient = when {
+                    mode != "hd" -> client
+                    index < 2 -> hdPrimaryClient
+                    else -> hdFallbackClient
                 }
-                output.toByteArray()
+                rawBytes = fetchImageBytes(activeClient, candidate, maxBytes)
+                if (rawBytes != null) break
             }
+            if (rawBytes == null) return null
 
             val maxDim = if (mode == "hd") 900 else 380
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

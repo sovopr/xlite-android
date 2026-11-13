@@ -284,5 +284,30 @@ function runExtendedActionTests() {
     extCtx.__onAsyncFinish(signedRequests.shift().callbackId, JSON.stringify({ data: { create_tweet: { tweet_results: { result: {} } } } }));
     assert.equal(replyEl.textContent, '💬 2', 'Successful reply increments parent reply count');
 
+    // compareSemver, Settings APK update banner, and downloadApkUpdate bridge delegation
+    assert.equal(extCtx.compareSemver('1.0.17', '1.0.16') > 0, true);
+    assert.equal(extCtx.compareSemver('1.0.17', '1.0.17'), 0);
+    assert.equal(extCtx.compareSemver('1.0.9', '1.0.17') < 0, true);
+    assert.equal(extCtx.compareSemver('unknown', '1.0.17'), 0);
+
+    let mockInstalledApk = '1.0.16';
+    const openedUrls = [];
+    extCtx.AndroidBridge.getCookies = () => JSON.stringify({ auth_token: 'tok', ct0: 'csrf', image_mode: 'tap' });
+    extCtx.AndroidBridge.isUsingLiveHtml = () => false;
+    extCtx.AndroidBridge.getAppVersionInfo = () => JSON.stringify({ version: mockInstalledApk, build: '15', isLive: false });
+    extCtx.AndroidBridge.openExternalUrl = url => { openedUrls.push(url); return true; };
+
+    extCtx.renderSettings();
+    assert.match(mainContent.innerHTML, /Native APK Update Available/);
+    assert.match(mainContent.innerHTML, /Download APK Update/);
+
+    extCtx.downloadApkUpdate();
+    assert.equal(openedUrls.length, 1);
+    assert.match(openedUrls[0], /\/releases\/latest\/download\/xlite-fup-release\.apk$/);
+
+    mockInstalledApk = vm.runInContext('LATEST_APK_VERSION', extCtx);
+    extCtx.renderSettings();
+    assert.doesNotMatch(mainContent.innerHTML, /Native APK Update Available/, 'Settings hides APK update prompt when current APK matches LATEST_APK_VERSION');
+
     console.log('Async post and reply tests passed.');
 }

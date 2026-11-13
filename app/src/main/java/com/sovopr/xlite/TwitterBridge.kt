@@ -1,7 +1,9 @@
 package com.sovopr.xlite
 
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
+import android.net.Uri
 import android.webkit.JavascriptInterface
 import org.json.JSONObject
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -300,6 +302,24 @@ class TwitterBridge(private val context: Context) {
     @JavascriptInterface
     fun reloadApp() {
         (context as? MainActivity)?.reloadAppUrl()
+    }
+
+    @JavascriptInterface
+    fun openExternalUrl(url: String): Boolean {
+        val parsed = url.toHttpUrlOrNull() ?: return false
+        if (!parsed.isHttps) return false
+        val allowed = (parsed.host == "github.com" && parsed.encodedPath.startsWith("/sovopr/xlite-android")) ||
+            parsed.host == "x.com"
+        if (!allowed) return false
+        return try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     @JavascriptInterface

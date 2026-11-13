@@ -33,7 +33,19 @@ jobs:
           node scripts/search-pagination.test.cjs
           node scripts/post-actions.test.cjs
 
+      - name: Decode Release Keystore
+        if: ${{ secrets.XLITE_KEYSTORE_B64 != '' }}
+        env:
+          XLITE_KEYSTORE_B64: ${{ secrets.XLITE_KEYSTORE_B64 }}
+        run: |
+          echo "$XLITE_KEYSTORE_B64" | base64 --decode > "${{ runner.temp }}/release.keystore"
+          echo "XLITE_KEYSTORE_FILE=${{ runner.temp }}/release.keystore" >> "$GITHUB_ENV"
+
       - name: Build Release APK
+        env:
+          XLITE_KEYSTORE_PASSWORD: ${{ secrets.XLITE_KEYSTORE_PASSWORD }}
+          XLITE_KEY_ALIAS: ${{ secrets.XLITE_KEY_ALIAS }}
+          XLITE_KEY_PASSWORD: ${{ secrets.XLITE_KEY_PASSWORD }}
         run: ./gradlew assembleRelease --stacktrace
 
       - name: List Generated APKs

@@ -1309,8 +1309,12 @@ let bookmarksCache = null;
 let isFetching = false;
 let pendingCallbacks = {};
 const pendingActionLocks = {};
-const APP_VERSION = '1.0.16';
-const APP_BUILD = '2026.11.13.1';
+const activeImageLoads = new Set();
+const APP_VERSION = '1.0.17';
+const APP_BUILD = '2026.11.13.2';
+const LATEST_APK_VERSION = '1.0.17';
+const LATEST_APK_URL = 'https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk';
+try { if (typeof history !== 'undefined' && 'scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch (e) {}
 const FEED_REFRESH_MS = 5 * 60 * 1000;
 const FEED_PAGE_SIZE = 6;
 let currentView = 'feed';
@@ -1968,8 +1972,24 @@ function localImageUrl(url, mode, fresh = false) {
     return fresh ? base + '&retry=' + attempt : base;
 }
 
-function loadHdImg(btn, url, imgId) {
+function mediaHdUrl(url) {
+    try {
+        const parsed = new URL(url);
+        if (parsed.protocol !== 'https:' || parsed.hostname !== 'pbs.twimg.com') return url;
+        const cleanPath = parsed.pathname.replace(/:(thumb|small|medium|large|orig)$/, '');
+        if (cleanPath.startsWith('/media/') && (/\.png$/i.test(cleanPath) || parsed.searchParams.get('format') === 'png')) {
+            parsed.pathname = cleanPath;
+            parsed.searchParams.set('format', 'webp');
+            return parsed.href;
+        }
+        return url;
+    } catch (_) { return url; }
+}
+
+function loadHdImg(btn, url, imgId, fallbackUrl) {
     const fresh = btn.dataset.retryRequested === '1';
+    const rawTarget = fallbackUrl || url;
+    const hdTarget = mediaHdUrl(url);
     btn.innerHTML = 'Loading HD...';
     btn.disabled = true;
     const img = document.getElementById(imgId);
@@ -1979,28 +1999,64 @@ function loadHdImg(btn, url, imgId) {
         return;
     }
 
+    let settled = false;
     const hdImg = new Image();
+    activeImageLoads.add(hdImg);
+    const timer = setTimeout(() => {
+        if (!settled && typeof hdImg.onerror === 'function') hdImg.onerror();
+    }, 95000);
+    const cleanup = () => {
+        clearTimeout(timer);
+        activeImageLoads.delete(hdImg);
+    };
+
     hdImg.onload = function() {
+        if (settled) return;
+        settled = true;
+        cleanup();
         img.src = hdImg.src;
-        btn.innerHTML = '✓ HD Loaded';
+        btn.innerHTML = '✓ HD · Reload';
+        btn.disabled = false;
+        btn.dataset.retryRequested = '1';
         btn.style.color = 'var(--accent)';
     };
     hdImg.onerror = function() {
+        if (settled) return;
+        if (!hdImg.dataset.fallbackTried && hdTarget !== rawTarget) {
+            hdImg.dataset.fallbackTried = '1';
+            hdImg.src = localImageUrl(rawTarget, 'hd', true);
+            return;
+        }
+        settled = true;
+        cleanup();
         btn.innerHTML = 'Retry HD';
         btn.disabled = false;
         btn.dataset.retryRequested = '1';
     };
-    hdImg.src = localImageUrl(url, 'hd', fresh);
+    hdImg.src = localImageUrl(hdTarget, 'hd', fresh);
 }
 
 function loadThumbImg(btn, url, imgId, hdUrl = url) {
     const fresh = btn.dataset.retryRequested === '1';
     btn.innerHTML = 'Loading image...';
     btn.disabled = true;
+    let settled = false;
     const img = document.createElement('img');
     img.id = imgId;
     img.className = 'tweet-img';
+    activeImageLoads.add(img);
+    const timer = setTimeout(() => {
+        if (!settled && typeof img.onerror === 'function') img.onerror();
+    }, 55000);
+    const cleanup = () => {
+        clearTimeout(timer);
+        activeImageLoads.delete(img);
+    };
+
     img.onload = function() {
+        if (settled) return;
+        settled = true;
+        cleanup();
         const parent = btn.parentElement;
         parent.innerHTML = '';
         parent.appendChild(img);
@@ -2013,11 +2069,14 @@ function loadThumbImg(btn, url, imgId, hdUrl = url) {
         parent.appendChild(hdBox);
     };
     img.onerror = function() {
+        if (settled) return;
         if (url !== hdUrl && !img.dataset.originalRetried) {
             img.dataset.originalRetried = '1';
             img.src = localImageUrl(hdUrl, 'thumb', true);
             return;
         }
+        settled = true;
+        cleanup();
         btn.innerHTML = 'Retry loading';
         btn.disabled = false;
         btn.dataset.retryRequested = '1';
@@ -2047,7 +2106,17 @@ function mediaPreviewUrl(url, isVideo) {
     try {
         const parsed = new URL(url);
         if (parsed.protocol !== 'https:' || parsed.hostname !== 'pbs.twimg.com') return url;
-        parsed.searchParams.set('name', 'thumb');
+        const cleanPath = parsed.pathname.replace(/:(thumb|small|medium|large|orig)$/, '');
+        if (cleanPath.startsWith('/media/')) {
+            parsed.pathname = cleanPath;
+            parsed.searchParams.set('name', 'thumb');
+            return parsed.href;
+        }
+        const ext = (cleanPath.split('.').pop() || 'jpg').toLowerCase();
+        const format = ['jpg', 'jpeg', 'png', 'webp'].includes(ext) ? (ext === 'jpeg' ? 'jpg' : ext) : 'jpg';
+        parsed.pathname = cleanPath + ':thumb';
+        parsed.search = '';
+        parsed.searchParams.set('format', format);
         return parsed.href;
     } catch (_) { return url; }
 }
@@ -2582,21 +2651,45 @@ function loadMoreTweets(feedType) {
     fetchFeedData(feedType, true);
 }
 
+function getCurrentScrollY() {
+    return Number(
+        (typeof window !== 'undefined' ? window.scrollY : 0) ||
+        (typeof document !== 'undefined' && document.documentElement ? document.documentElement.scrollTop : 0) ||
+        (typeof document !== 'undefined' && document.body ? document.body.scrollTop : 0) ||
+        0
+    );
+}
+
+function restoreScrollPosition(scrollY) {
+    const target = Math.max(0, Number(scrollY) || 0);
+    if (typeof window.scrollTo === 'function') window.scrollTo(0, target);
+    if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+            if (currentView === 'feed' || currentView === 'search') window.scrollTo(0, target);
+        });
+    }
+    setTimeout(() => {
+        if (currentView === 'feed' || currentView === 'search') window.scrollTo(0, target);
+    }, 60);
+}
+
 // Conversation / Thread View
 function viewThread(tweetId, focusReply = false) {
+    const capturedScrollY = getCurrentScrollY();
     if (currentView !== 'thread') {
         threadOriginView = currentView;
         if (currentView === 'feed') {
+            savedFeedScrollY = capturedScrollY;
+            savedFeedTab = currentTab;
+            savedFeedRequestInterrupted = !!(isFetching && isFetching.startsWith(currentTab + ':' + viewGeneration + ':'));
+            if (savedFeedRequestInterrupted) isFetching = false;
             const feedContainer = document.getElementById('mainContent');
             savedFeedMarkup = feedContainer.innerHTML;
             savedFeedNodes = document.createDocumentFragment();
             while (feedContainer.firstChild) savedFeedNodes.appendChild(feedContainer.firstChild);
-            savedFeedScrollY = window.scrollY;
-            savedFeedTab = currentTab;
-            savedFeedRequestInterrupted = !!(isFetching && isFetching.startsWith(currentTab + ':' + viewGeneration + ':'));
-            if (savedFeedRequestInterrupted) isFetching = false;
         }
         if (currentView === 'search') {
+            savedSearchScrollY = capturedScrollY;
             if (searchState && searchState.loading) {
                 searchState.loading = false;
                 if (searchState.cursor) renderSearchLoadMore('Search was interrupted. Retry to continue.');
@@ -2606,7 +2699,6 @@ function viewThread(tweetId, focusReply = false) {
                 }
             }
             savedSearchMarkup = document.getElementById('mainContent').innerHTML;
-            savedSearchScrollY = window.scrollY;
         }
     }
     currentView = 'thread';
@@ -2756,14 +2848,14 @@ function restoreFeedView(targetTab, fromThread = false) {
         savedFeedMarkup = '';
         savedFeedNodes = null;
         savedFeedRequestInterrupted = false;
-        window.scrollTo(0, scrollY);
+        restoreScrollPosition(scrollY);
         return;
     }
     const cacheScrollY = fromThread && currentTab === 'cache' ? savedFeedScrollY : null;
     savedFeedMarkup = '';
     savedFeedNodes = null;
     loadFeed(currentTab);
-    if (cacheScrollY !== null) window.scrollTo(0, cacheScrollY);
+    if (cacheScrollY !== null) restoreScrollPosition(cacheScrollY);
 }
 
 // History stack back navigation
@@ -2782,7 +2874,7 @@ window.onpopstate = function(e) {
         document.querySelectorAll('.bottom-item').forEach((el, idx) => {
             el.classList.toggle('active', idx === 1);
         });
-        window.scrollTo(0, savedSearchScrollY);
+        restoreScrollPosition(savedSearchScrollY);
     } else {
         let origin = (e.state && e.state.originTab) ? e.state.originTab : currentFeedOrigin || currentTab;
         restoreFeedView(origin, currentView === 'thread' && threadOriginView === 'feed');
@@ -3139,6 +3231,9 @@ function renderSettings() {
         } catch(e){}
     }
 
+    let installedVersion = versionInfo.version || 'unknown';
+    let hasNewApk = installedVersion !== 'unknown' && compareSemver(LATEST_APK_VERSION, installedVersion) > 0;
+
     container.innerHTML = `
     <div class="card">
         <div class="card-title">Version & System Info</div>
@@ -3149,7 +3244,7 @@ function renderSettings() {
             </div>
             <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding:6px 0;">
                 <span style="color:var(--text-muted);">Installed APK</span>
-                <span style="color:var(--text);">v${escapeHtml(versionInfo.version || 'unknown')} (${escapeHtml(versionInfo.build || '?')})</span>
+                <span style="color:var(--text);">v${escapeHtml(installedVersion)} (${escapeHtml(versionInfo.build || '?')})</span>
             </div>
             <div style="display:flex; justify-content:space-between; padding:6px 0;">
                 <span style="color:var(--text-muted);">Runtime Source</span>
@@ -3163,14 +3258,26 @@ function renderSettings() {
     <div class="card">
         <div class="card-title">In-App Live Updates</div>
         <p class="card-desc">
-            Pull latest improvements and bug fixes directly from GitHub over-the-air.
+            Pull latest UI and script fixes over-the-air, or download a native APK update when Android bridge/media code changes.
         </p>
         <button type="button" class="btn btn-secondary btn-block" onclick="triggerAppUpdate()" id="updateBtn">
             Check for Updates
         </button>
         <div id="updateStatusText" style="margin-top:10px; font-size:13px; color:var(--text-muted); text-align:center;">
-            Currently running ${isLive ? 'live OTA' : 'bundled'} version (v${APP_VERSION})
+            Currently running ${isLive ? 'live OTA' : 'bundled'} web v${APP_VERSION}
         </div>
+        ${hasNewApk ? `
+        <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border);">
+            <div style="font-size:13px; color:var(--accent); font-weight:700; margin-bottom:6px;">
+                Native APK Update Available (v${escapeHtml(LATEST_APK_VERSION)})
+            </div>
+            <p class="card-desc" style="margin-bottom:10px;">
+                Installed APK is v${escapeHtml(installedVersion)}. Update the APK for native fixes (Like, Retweet, video poster frames, faster HD image loading).
+            </p>
+            <button type="button" class="btn btn-block" onclick="downloadApkUpdate()">
+                Download APK Update (v${escapeHtml(LATEST_APK_VERSION)})
+            </button>
+        </div>` : ''}
         ${isLive ? `
         <button type="button" class="btn btn-secondary btn-block" style="margin-top:10px; font-size:13px;" onclick="resetToFactoryAsset()">
             Revert to Bundled Version
@@ -3236,6 +3343,23 @@ function saveSettings(e) {
     }
 }
 
+function compareSemver(a, b) {
+    const pa = String(a || '').split('.').map(n => parseInt(n, 10));
+    const pb = String(b || '').split('.').map(n => parseInt(n, 10));
+    if (pa.length !== 3 || pb.length !== 3 || pa.some(Number.isNaN) || pb.some(Number.isNaN)) return 0;
+    for (let i = 0; i < 3; i++) {
+        if (pa[i] !== pb[i]) return pa[i] - pb[i];
+    }
+    return 0;
+}
+
+function downloadApkUpdate() {
+    if (window.AndroidBridge && typeof AndroidBridge.openExternalUrl === 'function') {
+        if (AndroidBridge.openExternalUrl(LATEST_APK_URL)) return;
+    }
+    window.location.href = LATEST_APK_URL;
+}
+
 // In-app hot updater
 function triggerAppUpdate() {
     const statusText = document.getElementById('updateStatusText');
@@ -3244,27 +3368,31 @@ function triggerAppUpdate() {
     if (updateBtn) updateBtn.disabled = true;
 
     const updateUrl = 'https://gist.githubusercontent.com/sovopr/c52e8a1490b3a5415525b27063726bbe/raw/index.html?t=' + Date.now();
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), 25000) : null;
 
     // Use native fetch first (clean network stack without Twitter headers)
-    fetch(updateUrl)
+    fetch(updateUrl, controller ? { signal: controller.signal } : undefined)
         .then(res => {
             if (!res.ok) throw new Error('HTTP ' + res.status);
             return res.text();
         })
         .then(html => {
+            if (timer) clearTimeout(timer);
             if (html && html.includes('<!DOCTYPE html>') && html.includes('mainContent')) {
                 applyUpdate(html);
             } else {
                 throw new Error('Invalid update file');
             }
         })
-        .catch(err => {
+        .catch(() => {
+            if (timer) clearTimeout(timer);
             // Fallback to bridge with clean headers
             performAsyncGet(updateUrl, (bridgeHtml) => {
                 if (bridgeHtml && bridgeHtml.includes('<!DOCTYPE html>') && bridgeHtml.includes('mainContent')) {
                     applyUpdate(bridgeHtml);
                 } else {
-                    if (statusText) statusText.innerHTML = 'Update check failed. Please try again.';
+                    if (statusText) statusText.innerHTML = 'Update check failed or timed out. Please try again.';
                     if (updateBtn) updateBtn.disabled = false;
                 }
             });
@@ -3280,9 +3408,22 @@ function applyUpdate(newHtml) {
         if (btn) btn.disabled = false;
         return;
     }
-    const newer = versionMatch[1].split('.').map(Number).some((part, i, parts) => part > Number(APP_VERSION.split('.')[i]) && parts.slice(0, i).every((p, j) => p === Number(APP_VERSION.split('.')[j])));
+    const newer = compareSemver(versionMatch[1], APP_VERSION) > 0;
     if (!newer) {
-        if (statusText) statusText.textContent = 'Already up to date (v' + APP_VERSION + ').';
+        let installedApk = 'unknown';
+        try {
+            if (window.AndroidBridge && AndroidBridge.getAppVersionInfo) {
+                installedApk = JSON.parse(AndroidBridge.getAppVersionInfo()).version || 'unknown';
+            }
+        } catch(e) {}
+        const apkMatch = newHtml.match(/const LATEST_APK_VERSION = '([0-9]+\.[0-9]+\.[0-9]+)'/);
+        const remoteApk = apkMatch ? apkMatch[1] : LATEST_APK_VERSION;
+        const needsApk = installedApk !== 'unknown' && compareSemver(remoteApk, installedApk) > 0;
+        if (statusText) {
+            statusText.textContent = needsApk
+                ? 'Web interface is up to date (v' + APP_VERSION + '). Tap Download APK Update below for native fixes.'
+                : 'Already up to date (v' + APP_VERSION + ').';
+        }
         const btn = document.getElementById('updateBtn');
         if (btn) btn.disabled = false;
         return;

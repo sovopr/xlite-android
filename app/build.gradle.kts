@@ -11,9 +11,21 @@ android {
         applicationId = "com.sovopr.xlite"
         minSdk = 24
         targetSdk = 34
-        versionCode = 15
-        versionName = "1.0.16"
+        versionCode = 16
+        versionName = "1.0.17"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        val ksPath = System.getenv("XLITE_KEYSTORE_FILE")
+        if (!ksPath.isNullOrBlank() && file(ksPath).exists()) {
+            create("release") {
+                storeFile = file(ksPath)
+                storePassword = System.getenv("XLITE_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("XLITE_KEY_ALIAS")
+                keyPassword = System.getenv("XLITE_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -23,7 +35,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 
