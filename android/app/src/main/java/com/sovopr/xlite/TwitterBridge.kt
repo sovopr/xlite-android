@@ -108,17 +108,25 @@ class TwitterBridge(private val context: Context) {
     fun getCookies(): String {
         val auth = prefs.getString("auth_token", "") ?: ""
         val ct0 = prefs.getString("ct0", "") ?: ""
-        val imgMode = prefs.getString("image_mode", "tap") ?: "tap"
+        val imgMode = XLitePolicy.normalizeImageMode(prefs.getString("image_mode", "tap"))
         return JSONObject().put("auth_token", auth).put("ct0", ct0).put("image_mode", imgMode).toString()
     }
 
     @JavascriptInterface
+    fun saveImageMode(imageMode: String): String {
+        val normalized = XLitePolicy.normalizeImageMode(imageMode)
+        prefs.edit().putString("image_mode", normalized).commit()
+        return normalized
+    }
+
+    @JavascriptInterface
     fun saveConfig(authToken: String, ct0: String, imageMode: String) {
+        val normalized = XLitePolicy.normalizeImageMode(imageMode)
         prefs.edit()
             .putString("auth_token", authToken.trim())
             .putString("ct0", ct0.trim())
-            .putString("image_mode", imageMode.trim())
-            .apply()
+            .putString("image_mode", normalized)
+            .commit()
     }
 
     private fun storeFileForKey(key: String): File {

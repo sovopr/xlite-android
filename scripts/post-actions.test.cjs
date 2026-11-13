@@ -562,6 +562,51 @@ function runExtendedActionTests() {
     }));
     assert.match(notifBox.innerHTML, /Bob liked your post/);
     assert.match(notifBox.innerHTML, /Original tweet text/);
+
+    // Immediate Settings preference persistence without submitting Save Configuration
+    const nativePrefs = { auth_token: 'tok', ct0: 'csrf', image_mode: 'tap' };
+    const prefStore = new Map();
+    const saveConfigLog = [];
+    extCtx.AndroidBridge.getCookies = () => JSON.stringify(nativePrefs);
+    extCtx.AndroidBridge.getCache = k => prefStore.get(k) || '';
+    extCtx.AndroidBridge.saveCache = (k, v) => { prefStore.set(k, v); };
+    extCtx.AndroidBridge.saveConfig = (a, c, m) => {
+        saveConfigLog.push({ a, c, m });
+        nativePrefs.auth_token = a;
+        nativePrefs.ct0 = c;
+        nativePrefs.image_mode = m;
+    };
+    delete extCtx.AndroidBridge.saveImageMode;
+    extCtx.document.getElementById = originalGetById;
+
+    // 1) Pre-v1.0.26 APK compatibility: handleSettingPrefChange saves immediately via saveConfig & cache without wiping tokens
+    vm.runInContext("appConfig = { auth_token: 'tok', ct0: 'csrf', image_mode: 'tap', avatar_mode: 'mini', hide_ads: true, sync_seen: true };", extCtx);
+    extCtx.handleSettingPrefChange('imgMode', 'auto');
+    assert.equal(nativePrefs.image_mode, 'auto', 'native SharedPreferences updated immediately on radio change');
+    assert.equal(nativePrefs.auth_token, 'tok', 'existing auth_token preserved when changing image mode');
+    assert.equal(prefStore.get('pref_image_mode'), 'auto', 'pref_image_mode cache written immediately');
+    assert.equal(vm.runInContext('appConfig.image_mode', extCtx), 'auto');
+    assert.equal(saveConfigLog.length, 1);
+
+    // Re-rendering Settings and re-running cold init keep 'auto' checked
+    extCtx.renderSettings();
+    assert.match(mainContent.innerHTML, /name="imgMode" value="auto"[^>]*checked/);
+    assert.doesNotMatch(mainContent.innerHTML, /name="imgMode" value="tap"[^>]*checked/);
+    extCtx.init();
+    assert.equal(vm.runInContext('appConfig.image_mode', extCtx), 'auto', 'init() preserves auto mode across restarts');
+
+    // 2) v1.0.26 native saveImageMode path works cleanly too and invalid values normalize to 'tap'
+    const directModeCalls = [];
+    extCtx.AndroidBridge.saveImageMode = m => {
+        directModeCalls.push(m);
+        nativePrefs.image_mode = m;
+        return m;
+    };
+    extCtx.handleSettingPrefChange('imgMode', 'bogus-mode');
+    assert.deepEqual(directModeCalls, ['tap']);
+    assert.equal(nativePrefs.image_mode, 'tap');
+    assert.equal(prefStore.get('pref_image_mode'), 'tap');
+
     vm.runInContext("if (seenSaveDebounce) clearTimeout(seenSaveDebounce); if (seenFlushTimer) clearTimeout(seenFlushTimer);", extCtx);
 
     console.log('Async post and reply tests passed.');

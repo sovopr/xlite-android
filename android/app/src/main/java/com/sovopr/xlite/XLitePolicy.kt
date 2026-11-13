@@ -114,6 +114,14 @@ object XLitePolicy {
     fun isNewerSemver(currentVersion: String, candidateVersion: String): Boolean =
         compareSemver(candidateVersion, currentVersion) > 0
 
+    /**
+     * Normalizes persisted or JS-supplied image loading mode to one of the supported presets.
+     */
+    fun normalizeImageMode(mode: String?): String = when (mode?.trim()?.lowercase()) {
+        "auto", "off", "tap" -> mode.trim().lowercase()
+        else -> "tap"
+    }
+
     fun isApkVersionCompatible(
         candidateVersionCode: Long,
         installedVersionCode: Long,
