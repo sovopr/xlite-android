@@ -1,7 +1,7 @@
 package com.sovopr.xlite
 
-import java.net.URI
-import java.net.URISyntaxException
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.security.MessageDigest
 
 /**
@@ -27,26 +27,24 @@ object XLitePolicy {
     private val PROFILE_BANNER_SIZE_REGEX = Regex("/\\d+x\\d+$")
     private val SHA256_LINE_REGEX = Regex("^([0-9a-fA-F]{64})\\s+\\*?(.+)$")
 
-    private fun parseHttpsUri(url: String): URI? {
+    private fun parseHttpsUrl(url: String): HttpUrl? {
         val trimmed = url.trim()
         if (trimmed.isEmpty()) return null
-        return try {
-            val uri = URI(trimmed)
-            if (!"https".equals(uri.scheme, ignoreCase = true)) return null
-            if (uri.rawUserInfo != null) return null
-            if (uri.host.isNullOrBlank()) return null
-            if (uri.port != -1 && uri.port != 443) return null
-            uri
-        } catch (_: URISyntaxException) {
-            null
+        val pathPortion = trimmed.substringBefore('?').substringBefore('#')
+        if (pathPortion.contains("..") || pathPortion.contains('\\') || pathPortion.lowercase().contains("%2e")) {
+            return null
         }
+        val parsed = trimmed.toHttpUrlOrNull() ?: return null
+        if (!parsed.isHttps) return null
+        if (parsed.username.isNotEmpty() || parsed.password.isNotEmpty()) return null
+        if (parsed.host.isBlank() || parsed.port != 443) return null
+        return parsed
     }
 
     fun isAllowedGetUrl(url: String): Boolean {
-        val uri = parseHttpsUri(url) ?: return false
-        val path = uri.rawPath ?: return false
-        if (path.contains("..")) return false
-        return when (uri.host.lowercase()) {
+        val parsed = parseHttpsUrl(url) ?: return false
+        val path = parsed.encodedPath
+        return when (parsed.host.lowercase()) {
             "x.com" -> path == "/home" || path.startsWith("/i/api/")
             "api.twitter.com" -> path.startsWith("/i/api/") || path.startsWith("/1.1/search/")
             "abs.twimg.com" -> Regex("^/responsive-web/client-web/ondemand\\.s\\.[0-9a-f]+a\\.js$").matches(path)
@@ -56,21 +54,21 @@ object XLitePolicy {
     }
 
     fun isAllowedPostUrl(url: String): Boolean {
-        val uri = parseHttpsUri(url) ?: return false
-        val path = uri.rawPath ?: return false
-        return uri.host.equals("x.com", ignoreCase = true) && ALLOWED_POST_PATH_REGEX.matches(path)
+        val parsed = parseHttpsUrl(url) ?: return false
+        val path = parsed.encodedPath
+        return parsed.host.equals("x.com", ignoreCase = true) && ALLOWED_POST_PATH_REGEX.matches(path)
     }
 
     fun isAllowedFormPostUrl(url: String): Boolean {
-        val uri = parseHttpsUri(url) ?: return false
-        val path = uri.rawPath ?: return false
-        return uri.host.equals("x.com", ignoreCase = true) && ALLOWED_FORM_POST_PATH_REGEX.matches(path)
+        val parsed = parseHttpsUrl(url) ?: return false
+        val path = parsed.encodedPath
+        return parsed.host.equals("x.com", ignoreCase = true) && ALLOWED_FORM_POST_PATH_REGEX.matches(path)
     }
 
     fun isAllowedSignedGetUrl(url: String): Boolean {
-        val uri = parseHttpsUri(url) ?: return false
-        val path = uri.rawPath ?: return false
-        return uri.host.equals("x.com", ignoreCase = true) && ALLOWED_SIGNED_GET_PATH_REGEX.matches(path)
+        val parsed = parseHttpsUrl(url) ?: return false
+        val path = parsed.encodedPath
+        return parsed.host.equals("x.com", ignoreCase = true) && ALLOWED_SIGNED_GET_PATH_REGEX.matches(path)
     }
 
     fun isValidTransactionId(transactionId: String): Boolean =
@@ -83,15 +81,15 @@ object XLitePolicy {
     }
 
     fun isAllowedApkUrl(url: String): Boolean {
-        val uri = parseHttpsUri(url) ?: return false
-        val path = uri.rawPath ?: return false
-        return uri.host.equals("github.com", ignoreCase = true) && ALLOWED_APK_PATH_REGEX.matches(path)
+        val parsed = parseHttpsUrl(url) ?: return false
+        val path = parsed.encodedPath
+        return parsed.host.equals("github.com", ignoreCase = true) && ALLOWED_APK_PATH_REGEX.matches(path)
     }
 
     fun isAllowedExternalUrl(url: String): Boolean {
-        val uri = parseHttpsUri(url) ?: return false
-        val host = uri.host.lowercase()
-        val path = uri.rawPath ?: ""
+        val parsed = parseHttpsUrl(url) ?: return false
+        val host = parsed.host.lowercase()
+        val path = parsed.encodedPath
         return (host == "github.com" && (path.startsWith("/sovopr/xlite-android") || path.startsWith("/sovopr/xlite-releases"))) ||
             host == "x.com"
     }
@@ -131,11 +129,11 @@ object XLitePolicy {
 
     fun resolveChecksumsUrl(apkUrl: String): String? {
         if (!isAllowedApkUrl(apkUrl)) return null
-        val uri = parseHttpsUri(apkUrl) ?: return null
-        val path = uri.rawPath ?: return null
+        val parsed = parseHttpsUrl(apkUrl) ?: return null
+        val path = parsed.encodedPath
         val slash = path.lastIndexOf('/')
         if (slash <= 0) return null
-        return "https://${uri.host}${path.substring(0, slash + 1)}SHA256SUMS.txt"
+        return "https://${parsed.host}${path.substring(0, slash + 1)}SHA256SUMS.txt"
     }
 
     fun parseSha256Sums(manifestText: String, assetName: String = "xlite-fup-release.apk"): String? {
@@ -186,11 +184,11 @@ object XLitePolicy {
     }
 
     fun buildImageCandidateUrls(rawUrl: String, mode: String, imageFormat: String): List<String> {
-        val uri = parseHttpsUri(rawUrl) ?: return listOf(rawUrl)
-        val rawPath = uri.rawPath ?: ""
+        val parsed = parseHttpsUrl(rawUrl) ?: return listOf(rawUrl)
+        val rawPath = parsed.encodedPath
         val cleanPath = rawPath.replace(TRAILING_TWITTER_SIZE_REGEX, "")
         val baseFormat = if (imageFormat.equals("jpeg", ignoreCase = true)) "jpg" else imageFormat.lowercase()
-        val origin = "https://${uri.host}"
+        val origin = "https://${parsed.host}"
 
         if (cleanPath.startsWith("/media/")) {
             val withQuery = { fmt: String, sizeName: String -> "$origin$cleanPath?format=$fmt&name=$sizeName" }

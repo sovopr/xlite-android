@@ -36,6 +36,7 @@ class XLiteUnitTest {
         assertTrue(XLitePolicy.isAllowedFormPostUrl("https://x.com/i/api/1.1/friendships/create.json"))
         assertFalse(XLitePolicy.isAllowedFormPostUrl("https://x.com/i/api/1.1/account/settings.json"))
 
+        assertTrue(XLitePolicy.isAllowedSignedGetUrl("https://x.com/i/api/graphql/qid123/SearchTimeline?variables=%7B%7D"))
         assertTrue(XLitePolicy.isAllowedSignedGetUrl("https://x.com/i/api/graphql/qid123/SearchTimeline?variables={}"))
         assertTrue(XLitePolicy.isAllowedSignedGetUrl("https://x.com/i/api/2/notifications/all.json"))
         assertFalse(XLitePolicy.isAllowedSignedGetUrl("https://api.twitter.com/i/api/2/notifications/all.json"))
