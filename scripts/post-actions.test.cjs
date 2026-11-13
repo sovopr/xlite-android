@@ -403,5 +403,31 @@ function runExtendedActionTests() {
     assert.equal(apkInstalls.length, 0, 'web-only update skips APK download');
     assert.equal(savedHtmls.length, 2);
 
+    // Settings renders Profile Pictures preference and saveSettings persists pref_avatar_mode
+    store.cache_pref_avatar_mode = 'normal';
+    extCtx.renderSettings();
+    assert.match(mainContent.innerHTML, /Profile Pictures/);
+    assert.match(mainContent.innerHTML, /name="avatarMode" value="normal" checked/);
+
+    let savedConfigArgs = null;
+    let cacheClearedCount = 0;
+    extCtx.alert = msg => extCtx.alerts.push(msg);
+    extCtx.AndroidBridge.clearCache = () => { cacheClearedCount++; };
+    extCtx.AndroidBridge.saveConfig = (a, c, m) => { savedConfigArgs = { a, c, m }; };
+    extCtx.document.getElementById = id => {
+        if (id === 'cfgAuth') return { value: 'tok' };
+        if (id === 'cfgCt0') return { value: 'csrf' };
+        return originalGetById(id);
+    };
+    extCtx.document.querySelector = sel => {
+        if (sel === 'input[name="imgMode"]:checked') return { value: 'tap' };
+        if (sel === 'input[name="avatarMode"]:checked') return { value: 'mini' };
+        return null;
+    };
+    vm.runInContext("nav = () => {};", extCtx);
+    extCtx.saveSettings({ preventDefault() {} });
+    assert.equal(store.cache_pref_avatar_mode, 'mini');
+    assert.deepEqual(savedConfigArgs, { a: 'tok', c: 'csrf', m: 'tap' });
+
     console.log('Async post and reply tests passed.');
 }

@@ -343,6 +343,56 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
     assert.equal(hdBtn.innerHTML, 'Retry HD');
     assert.equal(hdBtn.disabled, false);
     assert.equal(hdBtn.dataset.retryRequested, '1');
+
+    // Profile pictures: lazy _mini / _normal variants, 0 KB fallback in off mode, initial fallback
+    const pfpTweet = hdCtx.parseSingleTweet({
+        rest_id: '888',
+        core: {
+            user_results: {
+                result: {
+                    core: { name: 'Ada', screen_name: 'ada' },
+                    avatar: { image_url: 'https://pbs.twimg.com/profile_images/123/abc_normal.jpg' }
+                }
+            }
+        },
+        legacy: { id_str: '888', full_text: 'Testing pfp' },
+        quoted_status_result: {
+            result: {
+                rest_id: '887',
+                core: {
+                    user_results: {
+                        result: {
+                            core: { name: 'Grace', screen_name: 'grace' },
+                            avatar: { image_url: 'https://pbs.twimg.com/profile_images/456/qwe_bigger.png' }
+                        }
+                    }
+                },
+                legacy: { id_str: '887', full_text: 'Quoted text' }
+            }
+        }
+    });
+    assert.equal(pfpTweet.user_avatar, 'https://pbs.twimg.com/profile_images/123/abc_normal.jpg');
+    assert.equal(pfpTweet.quoted.user_avatar, 'https://pbs.twimg.com/profile_images/456/qwe_bigger.png');
+    assert.equal(hdCtx.avatarVariantUrl('https://pbs.twimg.com/profile_images/123/abc_normal.jpg', 'mini'), 'https://pbs.twimg.com/profile_images/123/abc_mini.jpg');
+    assert.equal(hdCtx.avatarVariantUrl('https://pbs.twimg.com/profile_images/456/qwe_bigger.png', 'normal'), 'https://pbs.twimg.com/profile_images/456/qwe_normal.png');
+    assert.equal(hdCtx.avatarVariantUrl('https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png', 'mini'), '');
+    assert.equal(hdCtx.avatarVariantUrl('https://pbs.twimg.com/profile_images/789/anim_normal.gif', 'mini'), '');
+
+    vm.runInContext("appConfig.image_mode = 'tap'; appConfig.avatar_mode = 'mini';", hdCtx);
+    const pfpMarkup = hdCtx.renderTweetHtml(pfpTweet);
+    assert.match(pfpMarkup, /class="tweet-avatar"/);
+    assert.match(pfpMarkup, /class="tweet-avatar mini"/, 'quoted tweet renders compact mini avatar');
+    assert.match(pfpMarkup, /loading="lazy"/);
+    assert.match(pfpMarkup, /abc_mini\.jpg/);
+    assert.match(pfpMarkup, /qwe_mini\.png/);
+    assert.match(pfpMarkup, /onerror="this\.remove\(\)"/);
+
+    vm.runInContext("appConfig.avatar_mode = 'off';", hdCtx);
+    const initialsMarkup = hdCtx.renderTweetHtml(pfpTweet);
+    assert.doesNotMatch(initialsMarkup, /<img\b/, 'Initials-only mode loads zero avatar images');
+    assert.match(initialsMarkup, /<span>A<\/span>/);
+    vm.runInContext("appConfig.avatar_mode = 'mini'; appConfig.image_mode = 'off';", hdCtx);
+    assert.doesNotMatch(hdCtx.renderTweetHtml(pfpTweet), /<img\b/, 'Text-only mode keeps 0 KB even when avatar_mode is mini');
 })();
 
 console.log('Feed navigation, refresh, and image retry tests passed.');

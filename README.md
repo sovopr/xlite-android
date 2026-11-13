@@ -38,6 +38,7 @@ Starting with **v1.0.17**, GitHub release APKs are signed with one persistent re
 ## Using less data
 
 - Leave image mode on **Tap to load** or choose **Off** in Settings.
+- Profile pictures load lazily for visible tweets (`Mini` 24px ~1.6 KB avg, `Standard` 48px ~2.4 KB avg) and are cached permanently on disk by URL so repeat views use 0 bytes; choose **Initials only** (or **Text only** image mode) for strict 0 KB.
 - Use **Offline** to read the cached feed without a new request.
 - Use **Load More** only when you need another page of posts or search results.
 - Video and GIF posts show a single poster frame on request. The app does not start MP4 playback on a 64 kbps connection. In a controlled 64 kbps transfer test, an 18-second 267 kbps MP4 took 74 seconds; three short clips still took 10 seconds. A pre-generated three-frame animation took 1.4 seconds, but the feed data used here supplies one poster image, so creating that animation on the phone would require fetching video data first.

@@ -111,10 +111,48 @@ a { color: var(--accent); text-decoration: none; }
 }
 .tweet-header {
   display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.tweet-meta {
+  display: flex;
   align-items: baseline;
-  gap: 6px;
-  margin-bottom: 4px;
+  gap: 0 6px;
   flex-wrap: wrap;
+  min-width: 0;
+}
+.tweet-avatar {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #1d2228;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  cursor: pointer;
+}
+.tweet-avatar.mini {
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
+}
+.tweet-avatar-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity 0.12s ease;
 }
 .tweet-name {
   font-weight: 700;
@@ -1302,7 +1340,7 @@ let currentTab = 'following';
 let currentFeedOrigin = 'following';
 let cursors = { following: null, foryou: null };
 let usedFeedCursors = { following: new Set(), foryou: new Set() };
-let appConfig = { auth_token: '', ct0: '', image_mode: 'tap' };
+let appConfig = { auth_token: '', ct0: '', image_mode: 'tap', avatar_mode: 'mini' };
 let currentTweetsList = [];
 let allTweetsMap = {};
 let bookmarksCache = null;
@@ -1310,8 +1348,8 @@ let isFetching = false;
 let pendingCallbacks = {};
 const pendingActionLocks = {};
 const activeImageLoads = new Set();
-const APP_VERSION = '1.0.18';
-const APP_BUILD = '2026.11.13.3';
+const APP_VERSION = '1.0.19';
+const APP_BUILD = '2026.11.13.4';
 const LATEST_APK_VERSION = '1.0.18';
 const LATEST_APK_URL = 'https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk';
 let activeApkDownloadState = null;
@@ -1447,6 +1485,26 @@ const POST_MUTATIONS = {
     }
 };
 
+function readSavedAvatarMode() {
+    let pref = '';
+    if (window.AndroidBridge && typeof AndroidBridge.getCache === 'function') {
+        try { pref = AndroidBridge.getCache('pref_avatar_mode') || ''; } catch (_) {}
+    }
+    if (!pref) {
+        try { pref = localStorage.getItem('xlite_avatar_mode') || ''; } catch (_) {}
+    }
+    return ['mini', 'normal', 'off'].includes(pref) ? pref : 'mini';
+}
+
+function saveAvatarModePref(mode) {
+    const clean = ['mini', 'normal', 'off'].includes(mode) ? mode : 'mini';
+    if (window.AndroidBridge && typeof AndroidBridge.saveCache === 'function') {
+        try { AndroidBridge.saveCache('pref_avatar_mode', clean); } catch (_) {}
+    }
+    try { localStorage.setItem('xlite_avatar_mode', clean); } catch (_) {}
+    return clean;
+}
+
 function init() {
     if (window.AndroidBridge) {
         try {
@@ -1455,6 +1513,7 @@ function init() {
             console.error(e);
         }
     }
+    appConfig.avatar_mode = readSavedAvatarMode();
     try {
         let saved = localStorage.getItem('last_active_tab');
         if (saved && ['following', 'foryou', 'cache'].includes(saved)) {
@@ -2122,6 +2181,38 @@ function mediaPreviewUrl(url, isVideo) {
     } catch (_) { return url; }
 }
 
+function avatarVariantUrl(url, mode = 'mini') {
+    if (!url || mode === 'off') return '';
+    try {
+        const parsed = new URL(url);
+        if (parsed.protocol !== 'https:' || parsed.hostname !== 'pbs.twimg.com') return '';
+        if (!parsed.pathname.startsWith('/profile_images/')) return '';
+        if (/\.gif$/i.test(parsed.pathname)) return '';
+        const suffix = mode === 'normal' ? '_normal' : '_mini';
+        parsed.pathname = parsed.pathname.replace(/_(mini|normal|bigger|200x200|400x400)(\.[a-z0-9]+)$/i, suffix + '$2');
+        return parsed.href;
+    } catch (_) { return ''; }
+}
+
+function getEffectiveAvatarMode() {
+    if (appConfig.image_mode === 'off') return 'off';
+    const pref = appConfig.avatar_mode || 'mini';
+    return ['mini', 'normal', 'off'].includes(pref) ? pref : 'mini';
+}
+
+function renderAvatarHtml(tw, sizeClass = '') {
+    const label = String(tw.user_name || tw.user_screen_name || 'X').trim();
+    const initial = escapeHtml((label[0] || 'X').toUpperCase());
+    const srcUrl = avatarVariantUrl(tw.user_avatar, getEffectiveAvatarMode());
+    const clickAttr = (!sizeClass && tw.user_screen_name)
+        ? ` onclick="searchTag('from:${escapeHtml(tw.user_screen_name)}'); event.stopPropagation();"`
+        : '';
+    const imgTag = srcUrl
+        ? `<img class="tweet-avatar-img" src="${localImageUrl(srcUrl, 'thumb')}" alt="" loading="lazy" decoding="async" onload="this.style.opacity='1'" onerror="this.remove()" />`
+        : '';
+    return `<span class="tweet-avatar${sizeClass ? ' ' + sizeClass : ''}"${clickAttr}><span>${initial}</span>${imgTag}</span>`;
+}
+
 function renderTweetHtml(tw) {
     let rtHtml = tw.is_retweet
         ? `<div class="retweet-banner">⇄ Retweeted by ${escapeHtml(tw.retweeted_by || 'Someone')}</div>`
@@ -2166,9 +2257,12 @@ function renderTweetHtml(tw) {
         let q = tw.quoted;
         quotedHtml = `
         <div class="quoted-box" onclick="viewThread('${escapeHtml(q.id)}'); event.stopPropagation();">
-            <div class="tweet-header">
-                <span class="tweet-name">${escapeHtml(q.user_name || q.user_screen_name || '𝕏 User')}</span>
-                <span class="tweet-handle">${q.user_screen_name ? '@' + escapeHtml(q.user_screen_name) : ''}</span>
+            <div class="tweet-header" style="margin-bottom:4px;">
+                ${renderAvatarHtml(q, 'mini')}
+                <div class="tweet-meta">
+                    <span class="tweet-name">${escapeHtml(q.user_name || q.user_screen_name || '𝕏 User')}</span>
+                    <span class="tweet-handle">${q.user_screen_name ? '@' + escapeHtml(q.user_screen_name) : ''}</span>
+                </div>
             </div>
             <div class="tweet-body" style="font-size:14px; margin-top:2px;">${linkify(q.text)}</div>
         </div>`;
@@ -2182,11 +2276,14 @@ function renderTweetHtml(tw) {
     <div class="tweet" data-id="${escapeHtml(tw.id)}">
         ${rtHtml}
         <div class="tweet-header">
-            <span class="tweet-name" onclick="searchTag('from:${escapeHtml(tw.user_screen_name)}'); event.stopPropagation();">
-                ${escapeHtml(tw.user_name || tw.user_screen_name || '𝕏 User')}
-            </span>
-            ${handleHtml}
-            ${timeHtml}
+            ${renderAvatarHtml(tw)}
+            <div class="tweet-meta">
+                <span class="tweet-name" onclick="searchTag('from:${escapeHtml(tw.user_screen_name)}'); event.stopPropagation();">
+                    ${escapeHtml(tw.user_name || tw.user_screen_name || '𝕏 User')}
+                </span>
+                ${handleHtml}
+                ${timeHtml}
+            </div>
         </div>
         <div class="tweet-body" onclick="viewThread('${escapeHtml(tw.id)}')">${linkify(tw.text)}</div>
         ${mediaHtml}
@@ -2371,6 +2468,7 @@ function parseSingleTweet(tw) {
         text,
         user_name: user.name,
         user_screen_name: user.screen_name,
+        user_avatar: user.avatar || '',
         created_at: legacy.created_at ? new Date(legacy.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '',
         likes: legacy.favorite_count || tw.favorite_count || 0,
         retweets: legacy.retweet_count || tw.retweet_count || 0,
@@ -3219,6 +3317,7 @@ function executePostTweet(e) {
 function renderSettings() {
     const container = document.getElementById('mainContent');
     let cookies = { auth_token: '', ct0: '', image_mode: 'tap' };
+    let avatarMode = readSavedAvatarMode();
     let isLive = false;
     let versionInfo = { version: APP_VERSION, build: APP_BUILD, isLive: false };
     let apkStatus = { downloading: false, canInstall: true, cachedVersion: null };
@@ -3330,6 +3429,22 @@ function renderSettings() {
                 </label>
             </div>
 
+            <div class="card-title" style="font-size:15px; margin: 16px 0 6px;">Profile Pictures</div>
+            <div style="font-size:14px; line-height:2; margin-bottom:16px;">
+                <label style="display:block;">
+                    <input type="radio" name="avatarMode" value="mini" ${avatarMode === 'mini' ? 'checked' : ''}>
+                    Mini (24px · ~1.6 KB avg, cached)
+                </label>
+                <label style="display:block;">
+                    <input type="radio" name="avatarMode" value="normal" ${avatarMode === 'normal' ? 'checked' : ''}>
+                    Standard (48px · ~2.4 KB avg, cached)
+                </label>
+                <label style="display:block;">
+                    <input type="radio" name="avatarMode" value="off" ${avatarMode === 'off' ? 'checked' : ''}>
+                    Initials only (0 KB)
+                </label>
+            </div>
+
             <button type="submit" class="btn btn-block">Save Configuration</button>
         </form>
     </div>
@@ -3347,6 +3462,7 @@ function saveSettings(e) {
     const auth = document.getElementById('cfgAuth').value.trim();
     const ct0 = document.getElementById('cfgCt0').value.trim();
     const mode = document.querySelector('input[name="imgMode"]:checked').value;
+    const avatarMode = saveAvatarModePref(document.querySelector('input[name="avatarMode"]:checked')?.value || 'mini');
 
     if (window.AndroidBridge) {
         if (auth !== appConfig.auth_token || ct0 !== appConfig.ct0) {
@@ -3355,7 +3471,7 @@ function saveSettings(e) {
             bookmarksCache = [];
         }
         AndroidBridge.saveConfig(auth, ct0, mode);
-        appConfig = { auth_token: auth, ct0: ct0, image_mode: mode };
+        appConfig = { auth_token: auth, ct0: ct0, image_mode: mode, avatar_mode: avatarMode };
         alert("Saved");
         nav('feed');
     }
