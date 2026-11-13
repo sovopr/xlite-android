@@ -38,6 +38,7 @@ jobs:
             yes | "$SDKMANAGER" --licenses >/dev/null || true
           fi
       - name: Run Kotlin Unit Tests & Android Lint
+        working-directory: android
         env:
           XLITE_GIT_SHA: ${{ github.sha }}
         run: |
@@ -72,6 +73,7 @@ jobs:
             echo "XLITE_KEYSTORE_FILE=${{ runner.temp }}/release.keystore" >> "$GITHUB_ENV"
           fi
       - name: Build Signed Release APK
+        working-directory: android
         env:
           XLITE_KEYSTORE_PASSWORD: ${{ secrets.XLITE_KEYSTORE_PASSWORD }}
           XLITE_KEY_ALIAS: ${{ secrets.XLITE_KEY_ALIAS }}
@@ -80,11 +82,9 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon --stacktrace
-          cp app/build/outputs/apk/release/*.apk ./xlite-fup-release.apk
-          test -s ./xlite-fup-release.apk
-          sha256sum xlite-fup-release.apk > SHA256SUMS.txt
-          cat SHA256SUMS.txt
-          ls -lh ./xlite-fup-release.apk
+          cp app/build/outputs/apk/release/*.apk ../xlite-fup-release.apk
+          test -s ../xlite-fup-release.apk
+          (cd .. && sha256sum xlite-fup-release.apk > SHA256SUMS.txt && cat SHA256SUMS.txt && ls -lh ./xlite-fup-release.apk)
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:

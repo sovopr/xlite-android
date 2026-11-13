@@ -43,13 +43,13 @@ function checkEmbeddedScripts(htmlText) {
         if (!body.trim()) continue;
         count += 1;
         try {
-            new vm.Script(body, { filename: `app/src/main/assets/index.html#script-${count}` });
+            new vm.Script(body, { filename: `android/app/src/main/assets/index.html#script-${count}` });
         } catch (err) {
             fail(`Invalid inline JS in index.html script #${count}: ${err.message}`);
         }
     }
     if (count === 0) {
-        fail('Expected at least one inline <script> block in app/src/main/assets/index.html');
+        fail('Expected at least one inline <script> block in android/app/src/main/assets/index.html');
     }
     return count;
 }
@@ -57,13 +57,13 @@ function checkEmbeddedScripts(htmlText) {
 function checkVersionParity(gradleText, htmlText) {
     const gradleVerMatch = gradleText.match(/(?:val\s+appVersion[^\n]*\?:\s*"|versionName\s*=\s*")(\d+\.\d+\.\d+)"/);
     if (!gradleVerMatch) {
-        fail('Could not parse semantic versionName ("X.Y.Z") from app/build.gradle.kts');
+        fail('Could not parse semantic versionName ("X.Y.Z") from android/app/build.gradle.kts');
     }
     const gradleVer = gradleVerMatch[1];
 
     const gradleCodeMatch = gradleText.match(/versionCode\s*=\s*(?:[^\n]*\belse\s+)?(\d+)/);
     if (!gradleCodeMatch || Number(gradleCodeMatch[1]) <= 0) {
-        fail('Could not parse positive integer versionCode from app/build.gradle.kts');
+        fail('Could not parse positive integer versionCode from android/app/build.gradle.kts');
     }
     const gradleCode = Number(gradleCodeMatch[1]);
 
@@ -73,7 +73,7 @@ function checkVersionParity(gradleText, htmlText) {
     const apkShaMatch = htmlText.match(/const LATEST_APK_SHA256 = '([0-9a-fA-F]{64}|)';/);
 
     if (!appVerMatch || !apkVerMatch || !apkUrlMatch || !apkShaMatch) {
-        fail('Missing required version/OTA constants in app/src/main/assets/index.html');
+        fail('Missing required version/OTA constants in android/app/src/main/assets/index.html');
     }
 
     if (appVerMatch[1] !== gradleVer) {
@@ -106,9 +106,8 @@ function stripXmlCommentsAndCdata(xml) {
 
 function checkXmlAndSvgFiles() {
     const xmlTargets = [
-        path.join(ROOT, 'app/src/main/AndroidManifest.xml'),
-        ...walkFiles(path.join(ROOT, 'app/src/main/res'), p => p.endsWith('.xml')),
-        path.join(ROOT, 'logo.svg'),
+        path.join(ROOT, 'android/app/src/main/AndroidManifest.xml'),
+        ...walkFiles(path.join(ROOT, 'android/app/src/main/res'), p => p.endsWith('.xml')),
         ...walkFiles(path.join(ROOT, 'docs'), p => p.endsWith('.svg')),
     ];
 
@@ -181,9 +180,9 @@ function checkRequiredRepoFilesAndLinks(version) {
     const requiredFiles = [
         'README.md',
         'LICENSE',
-        'SECURITY.md',
-        'CONTRIBUTING.md',
-        'CODE_OF_CONDUCT.md',
+        '.github/SECURITY.md',
+        '.github/CONTRIBUTING.md',
+        '.github/CODE_OF_CONDUCT.md',
         'docs/logo.svg',
         'docs/social-preview.svg',
         'docs/social-preview.png',
@@ -205,27 +204,36 @@ function checkRequiredRepoFilesAndLinks(version) {
             fail(`Missing required repository artifact: ${rel}`);
         }
     }
+    if (readText('LICENSE').trim().length < 200) {
+        fail('LICENSE looks truncated or empty');
+    }
 
-    const readme = readText('README.md');
-    const linkRe = /!?\[[^\]]*\]\(([^)]+)\)/g;
+    const mdToCheck = ['README.md', '.github/CONTRIBUTING.md', '.github/SECURITY.md'];
     let linkCount = 0;
-    let m;
-    while ((m = linkRe.exec(readme)) !== null) {
-        const target = m[1].trim().split('#')[0];
-        if (!target || target.startsWith('http://') || target.startsWith('https://') || target.startsWith('mailto:')) {
-            continue;
-        }
-        linkCount += 1;
-        const resolved = path.resolve(ROOT, target);
-        if (!fs.existsSync(resolved)) {
-            fail(`Broken relative link in README.md: ${m[1]}`);
+    let readmeLinkCount = 0;
+    const linkRe = /!?\[[^\]]*\]\(([^)]+)\)/g;
+    for (const docRel of mdToCheck) {
+        const docText = readText(docRel);
+        const baseDir = path.dirname(path.join(ROOT, docRel));
+        let m;
+        while ((m = linkRe.exec(docText)) !== null) {
+            const target = m[1].trim().split('#')[0];
+            if (!target || target.startsWith('http://') || target.startsWith('https://') || target.startsWith('mailto:')) {
+                continue;
+            }
+            linkCount += 1;
+            if (docRel === 'README.md') readmeLinkCount += 1;
+            const resolved = path.resolve(baseDir, target);
+            if (!fs.existsSync(resolved)) {
+                fail(`Broken relative link in ${docRel}: ${m[1]}`);
+            }
         }
     }
-    return { requiredCount: requiredFiles.length, localLinkCount: linkCount };
+    return { requiredCount: requiredFiles.length, localLinkCount: readmeLinkCount || linkCount };
 }
 
 function checkNoSecrets() {
-    const scanRoots = ['app/src', 'docs', 'scripts', '.github', 'README.md', 'SECURITY.md', 'CONTRIBUTING.md'];
+    const scanRoots = ['android/app/src', 'docs', 'scripts', '.github', 'README.md'];
     const filesToScan = [];
     for (const entry of scanRoots) {
         const abs = path.join(ROOT, entry);
@@ -260,8 +268,8 @@ function checkNoSecrets() {
 }
 
 function main() {
-    const gradleText = readText('app/build.gradle.kts');
-    const htmlText = readText('app/src/main/assets/index.html');
+    const gradleText = readText('android/app/build.gradle.kts');
+    const htmlText = readText('android/app/src/main/assets/index.html');
 
     const scriptCount = checkEmbeddedScripts(htmlText);
     const { version, versionCode } = checkVersionParity(gradleText, htmlText);

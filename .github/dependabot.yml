@@ -1,7 +1,7 @@
 version: 2
 updates:
   - package-ecosystem: gradle
-    directory: /
+    directory: /android
     schedule:
       interval: weekly
     groups:
@@ -9,7 +9,7 @@ updates:
         patterns:
           - "*"
   - package-ecosystem: gradle
-    directory: /app
+    directory: /android/app
     schedule:
       interval: weekly
     groups:

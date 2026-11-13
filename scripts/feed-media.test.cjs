@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const html = fs.readFileSync(path.join(__dirname, '../app/src/main/assets/index.html'), 'utf8');
+const html = fs.readFileSync(path.join(__dirname, '../android/app/src/main/assets/index.html'), 'utf8');
 const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)][1][1];
 const cache = new Map();
 const requests = [];
@@ -242,7 +242,7 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
 (() => {
     const testFs = require('node:fs');
     const testPath = require('node:path');
-    const testHtml = testFs.readFileSync(testPath.join(__dirname, '../app/src/main/assets/index.html'), 'utf8');
+    const testHtml = testFs.readFileSync(testPath.join(__dirname, '../android/app/src/main/assets/index.html'), 'utf8');
     const testScript = [...testHtml.matchAll(/<script>([\s\S]*?)<\/script>/g)][1][1];
 
     // viewThread must capture scrollY before moving feed nodes collapses document height

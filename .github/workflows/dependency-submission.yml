@@ -4,11 +4,11 @@ on:
   push:
     branches: [ main, master ]
     paths:
-      - 'gradle/**'
-      - 'gradle.properties'
-      - 'settings.gradle.kts'
-      - 'build.gradle.kts'
-      - 'app/build.gradle.kts'
+      - 'android/gradle/**'
+      - 'android/gradle.properties'
+      - 'android/settings.gradle.kts'
+      - 'android/build.gradle.kts'
+      - 'android/app/build.gradle.kts'
       - '.github/workflows/dependency-submission.yml'
   workflow_dispatch:
 
@@ -41,10 +41,12 @@ jobs:
           fi
 
       - name: Make Gradle Wrapper Executable
+        working-directory: android
         run: chmod +x gradlew
 
       - name: Generate and Submit Gradle Dependency Graph
         uses: gradle/actions/dependency-submission@v6
         with:
+          build-root-directory: android
           additional-arguments: --no-daemon --stacktrace
 

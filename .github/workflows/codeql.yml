@@ -61,6 +61,7 @@ jobs:
 
       - name: Build Android Kotlin Sources
         if: matrix.language == 'java-kotlin'
+        working-directory: android
         env:
           XLITE_GIT_SHA: ${{ github.sha }}
         run: |

@@ -16,11 +16,11 @@ By participating in this project, you agree to abide by the [Code of Conduct](CO
 
 ### 1. Reporting Bugs
 - Check the [existing issues](https://github.com/sovopr/xlite-android/issues) before opening a new one to avoid duplicates.
-- Use the **[Bug report](.github/ISSUE_TEMPLATE/bug_report.md)** template.
+- Use the **[Bug report](ISSUE_TEMPLATE/bug_report.md)** template.
 - Include clear reproduction steps, environment details (Android version, device model, app version/SHA, network type), and screenshots if visual. Never paste real session cookies (`auth_token` or `ct0`).
 
 ### 2. Suggesting Features
-- Open an issue using the **[Feature request](.github/ISSUE_TEMPLATE/feature_request.md)** template.
+- Open an issue using the **[Feature request](ISSUE_TEMPLATE/feature_request.md)** template.
 - Describe the proposed feature, the bandwidth/usability problem it solves, and any alternatives you have considered.
 
 ### 3. Improving Documentation
@@ -48,8 +48,8 @@ cd xlite-android
 
 ### Keeping Version Numbers Consistent
 Before bumping a release, ensure the semantic version matches across both:
-- `app/build.gradle.kts` (`appVersion` default / `versionCode`)
-- `app/src/main/assets/index.html` (`APP_VERSION`, `LATEST_APK_VERSION`)
+- `android/app/build.gradle.kts` (`appVersion` default / `versionCode`)
+- `android/app/src/main/assets/index.html` (`APP_VERSION`, `LATEST_APK_VERSION`)
 
 `scripts/verify-assets.cjs` enforces this automatically in CI.
 
@@ -69,6 +69,8 @@ node scripts/post-actions.test.cjs
 
 ### Android Unit Tests, Lint & Build (Gradle)
 ```bash
+cd android
+chmod +x gradlew
 ./gradlew testReleaseUnitTest lintRelease assembleRelease
 ```
 
@@ -91,18 +93,24 @@ node scripts/post-actions.test.cjs
 
 ```
 xlite-android/
-├── app/
-│   ├── build.gradle.kts                      # Android SDK 24-34, OkHttp/Brotli & JUnit deps
-│   └── src/
-│       ├── main/
-│       │   ├── AndroidManifest.xml           # Minimal permissions & FileProvider
-│       │   ├── assets/index.html             # Self-contained WebView SPA + GraphQL/REST client
-│       │   ├── java/com/sovopr/xlite/        # MainActivity, TwitterBridge & XLitePolicy
-│       │   └── res/                          # App icons, colors, styles & FileProvider paths
-│       └── test/java/com/sovopr/xlite/       # JUnit4 policy, semver & media unit tests
+├── android/                                  # Self-contained Gradle & Kotlin Android project
+│   ├── app/
+│   │   ├── build.gradle.kts                  # Android SDK 24-34, OkHttp/Brotli & JUnit deps
+│   │   └── src/
+│   │       ├── main/
+│   │       │   ├── AndroidManifest.xml       # Minimal permissions & FileProvider
+│   │       │   ├── assets/index.html         # Self-contained WebView SPA + GraphQL/REST client
+│   │       │   ├── java/com/sovopr/xlite/    # MainActivity, TwitterBridge & XLitePolicy
+│   │       │   └── res/                      # App icons, colors, styles & FileProvider paths
+│   │       └── test/java/com/sovopr/xlite/   # JUnit4 policy, semver & media unit tests
+│   ├── gradle/                               # Gradle wrapper JAR and version properties
+│   ├── build.gradle.kts                      # Root Android Gradle plugin config
+│   ├── gradle.properties
+│   ├── gradlew
+│   └── settings.gradle.kts
 ├── scripts/                                  # Node verification & deterministic UI test harnesses
 ├── docs/                                     # Brand SVG assets, screenshots, security & release notes
-└── .github/                                  # CI, CodeQL, signed release workflow & templates
+└── .github/                                  # CI, CodeQL, release workflow, community docs & templates
 ```
 
 Thank you for contributing to X Lite!

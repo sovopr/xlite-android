@@ -8,8 +8,8 @@ if (!auth || !ct0) {
   process.exit(2);
 }
 
-const appHtml = fs.readFileSync('app/src/main/assets/index.html', 'utf8');
-const bridgeSource = fs.readFileSync('app/src/main/java/com/sovopr/xlite/TwitterBridge.kt', 'utf8');
+const appHtml = fs.readFileSync('android/app/src/main/assets/index.html', 'utf8');
+const bridgeSource = fs.readFileSync('android/app/src/main/java/com/sovopr/xlite/TwitterBridge.kt', 'utf8');
 const scripts = [...appHtml.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);
 if (scripts.length !== 2) throw new Error('Expected the transaction library and app scripts.');
 const context = { Buffer, TextEncoder, TextDecoder, Uint8Array, Math, Date, console, window: {}, document: {}, setTimeout, clearTimeout };

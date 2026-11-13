@@ -34,7 +34,7 @@ jobs:
           echo "$CHANGED"
           if [ -z "$CHANGED" ]; then
             echo "code=false" >> "$GITHUB_OUTPUT"
-          elif echo "$CHANGED" | grep -qvE '^(README(\.md)?|LICENSE|SECURITY\.md|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|\.gitignore|\.gitattributes|docs/|\.github/(ISSUE_TEMPLATE/|pull_request_template\.md|dependabot\.yml|workflows/codeql\.yml))'; then
+          elif echo "$CHANGED" | grep -qvE '^(README(\.md)?|LICENSE|\.gitignore|\.gitattributes|docs/|\.github/(ISSUE_TEMPLATE/|pull_request_template\.md|dependabot\.yml|CODE_OF_CONDUCT\.md|CONTRIBUTING\.md|SECURITY\.md|workflows/codeql\.yml))'; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
@@ -90,8 +90,10 @@ jobs:
             yes | "$SDKMANAGER" --licenses >/dev/null || true
           fi
       - name: Make Gradle Wrapper Executable
+        working-directory: android
         run: chmod +x gradlew
       - name: Run Kotlin Unit Tests, Android Lint & Release Compile Check
+        working-directory: android
         env:
           XLITE_GIT_SHA: ${{ github.sha }}
         run: ./gradlew testReleaseUnitTest lintRelease assembleRelease --no-daemon --stacktrace

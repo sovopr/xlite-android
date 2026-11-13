@@ -95,22 +95,28 @@ Instead of asking for your X password, X Lite uses the session cookies from a br
 
 ```
 xlite-android/
-├── app/
-│   ├── build.gradle.kts                      # Android SDK 24-34 config, GIT_SHA BuildConfig & JUnit4
-│   ├── proguard-rules.pro                    # Release R8/ProGuard rules
-│   └── src/
-│       ├── main/
-│       │   ├── AndroidManifest.xml           # allowBackup=false, FileProvider & package install perm
-│       │   ├── assets/
-│       │   │   └── index.html                # Self-contained OLED SPA, GraphQL/REST parsers & OTA UI
-│       │   ├── java/com/sovopr/xlite/
-│       │   │   ├── MainActivity.kt           # WebView host, local.xlite/img proxy & WebP disk cache
-│       │   │   ├── TwitterBridge.kt          # @JavascriptInterface OkHttp Brotli bridge & APK updater
-│       │   │   └── XLitePolicy.kt          # Pure-JVM URL allowlists, semver, SHA-256 & media policy
-│       │   └── res/                          # Vector launcher icons, dark themes & FileProvider paths
-│       └── test/
-│           └── java/com/sovopr/xlite/
-│               └── XLiteUnitTest.kt          # JUnit4 tests for allowlists, semver, SHA256SUMS & images
+├── android/                                  # Self-contained Gradle & Kotlin Android project
+│   ├── app/
+│   │   ├── build.gradle.kts                  # Android SDK 24-34 config, GIT_SHA BuildConfig & JUnit4
+│   │   ├── proguard-rules.pro                # Release R8/ProGuard rules
+│   │   └── src/
+│   │       ├── main/
+│   │       │   ├── AndroidManifest.xml       # allowBackup=false, FileProvider & package install perm
+│   │       │   ├── assets/
+│   │       │   │   └── index.html            # Self-contained OLED SPA, GraphQL/REST parsers & OTA UI
+│   │       │   ├── java/com/sovopr/xlite/
+│   │       │   │   ├── MainActivity.kt       # WebView host, local.xlite/img proxy & WebP disk cache
+│   │       │   │   ├── TwitterBridge.kt      # @JavascriptInterface OkHttp Brotli bridge & APK updater
+│   │       │   │   └── XLitePolicy.kt        # Pure-JVM URL allowlists, semver, SHA-256 & media policy
+│   │       │   └── res/                      # Vector launcher icons, dark themes & FileProvider paths
+│   │       └── test/
+│   │           └── java/com/sovopr/xlite/
+│   │               └── XLiteUnitTest.kt      # JUnit4 tests for allowlists, semver, SHA256SUMS & images
+│   ├── gradle/                               # Gradle wrapper JAR and version properties
+│   ├── build.gradle.kts                      # Root Android Gradle plugin config
+│   ├── gradle.properties
+│   ├── gradlew
+│   └── settings.gradle.kts
 ├── scripts/
 │   ├── verify-assets.cjs                     # Static validator: JS syntax, version parity, XML/SVG & leak scan
 │   ├── feed-media.test.cjs                   # Feed navigation, refresh & media retry tests
@@ -124,6 +130,9 @@ xlite-android/
 │   ├── releases/v1.0.25.md                   # Release notes for v1.0.25
 │   └── screenshots/                          # Real Android device WebP screenshots (feed, thread)
 └── .github/
+    ├── CODE_OF_CONDUCT.md
+    ├── CONTRIBUTING.md
+    ├── SECURITY.md
     ├── dependabot.yml                        # Weekly Gradle & GitHub Actions update checks
     ├── pull_request_template.md
     ├── ISSUE_TEMPLATE/
@@ -156,11 +165,12 @@ node scripts/search-pagination.test.cjs
 node scripts/post-actions.test.cjs
 
 # Kotlin unit tests, Android lint & release APK build
+cd android
 chmod +x gradlew
 ./gradlew testReleaseUnitTest lintRelease assembleRelease
 ```
 
-Release builds are output to `app/build/outputs/apk/release/`. Signing credentials follow `XLITE_KEYSTORE_FILE`, `XLITE_KEYSTORE_PASSWORD`, `XLITE_KEY_ALIAS`, and `XLITE_KEY_PASSWORD` as configured in [build-apk.yml](.github/workflows/build-apk.yml).
+Release builds are output to `android/app/build/outputs/apk/release/`. Signing credentials follow `XLITE_KEYSTORE_FILE`, `XLITE_KEYSTORE_PASSWORD`, `XLITE_KEY_ALIAS`, and `XLITE_KEY_PASSWORD` as configured in [build-apk.yml](.github/workflows/build-apk.yml).
 
 ---
 
@@ -226,16 +236,16 @@ flowchart TD
 ### Subsystem Architecture
 
 #### 1. Pooled Brotli Transport & Transaction Signing
-- **Shared HTTP/2 Client ([`TwitterBridge.kt`](app/src/main/java/com/sovopr/xlite/TwitterBridge.kt))**: Routes API calls, media fetches, and updates from one `ConnectionPool` (`16` idle connections, `5` minute keep-alive) with a `64`-request `Dispatcher` (`16` max per host) and `BrotliInterceptor` for compressed GraphQL payloads.
-- **Query Fallbacks & Signing ([`index.html`](app/src/main/assets/index.html))**: Primary and fallback GraphQL query IDs absorb routine upstream rotations, while `XLitePolicy.isValidTransactionId` validates client-signed `x-client-transaction-id` tokens before dispatching search calls.
+- **Shared HTTP/2 Client ([`TwitterBridge.kt`](android/app/src/main/java/com/sovopr/xlite/TwitterBridge.kt))**: Routes API calls, media fetches, and updates from one `ConnectionPool` (`16` idle connections, `5` minute keep-alive) with a `64`-request `Dispatcher` (`16` max per host) and `BrotliInterceptor` for compressed GraphQL payloads.
+- **Query Fallbacks & Signing ([`index.html`](android/app/src/main/assets/index.html))**: Primary and fallback GraphQL query IDs absorb routine upstream rotations, while `XLitePolicy.isValidTransactionId` validates client-signed `x-client-transaction-id` tokens before dispatching search calls.
 
 #### 2. Bandwidth-Aware WebP Media Pipeline & Fullscreen Video
-- **Localhost Proxy Interception ([`MainActivity.kt`](app/src/main/java/com/sovopr/xlite/MainActivity.kt))**: `WebViewClient.shouldInterceptRequest` intercepts `https://local.xlite/img` requests exclusively for `pbs.twimg.com`, enforcing mode-based download limits (`256 KB` thumb, `2560 KB` rich & HD) and `large`-first `XLitePolicy.buildImageCandidateUrls` resolution in `Auto-load previews`.
+- **Localhost Proxy Interception ([`MainActivity.kt`](android/app/src/main/java/com/sovopr/xlite/MainActivity.kt))**: `WebViewClient.shouldInterceptRequest` intercepts `https://local.xlite/img` requests exclusively for `pbs.twimg.com`, enforcing mode-based download limits (`256 KB` thumb, `2560 KB` rich & HD) and `large`-first `XLitePolicy.buildImageCandidateUrls` resolution in `Auto-load previews`.
 - **Full-Resolution Pass-Through & Fullscreen Chrome**: Well-sized `rich` and `hd` photos stream through without wasted CPU re-encoding and trim asynchronously under an `80 MB` ceiling in `cacheDir/images/`, while `WebChromeClient` handles native edge-to-edge fullscreen `<video>` playback.
 
 #### 3. Strict Allowlisting & App-Private Storage Isolation
-- **Defense-in-Depth URL Validation ([`XLitePolicy.kt`](app/src/main/java/com/sovopr/xlite/XLitePolicy.kt))**: Non-HTTPS URLs, custom ports, embedded credentials (`userinfo@`), `..` traversal segments, non-allowlisted GraphQL endpoints, and unapproved release origins are rejected before opening a socket.
-- **Device-Only Data ([`AndroidManifest.xml`](app/src/main/AndroidManifest.xml))**: `android:allowBackup="false"` keeps `xlite_prefs` (`MODE_PRIVATE`), offline feeds (`cacheDir/json_store`), and cached media scoped strictly to the app sandbox.
+- **Defense-in-Depth URL Validation ([`XLitePolicy.kt`](android/app/src/main/java/com/sovopr/xlite/XLitePolicy.kt))**: Non-HTTPS URLs, custom ports, embedded credentials (`userinfo@`), `..` traversal segments, non-allowlisted GraphQL endpoints, and unapproved release origins are rejected before opening a socket.
+- **Device-Only Data ([`AndroidManifest.xml`](android/app/src/main/AndroidManifest.xml))**: `android:allowBackup="false"` keeps `xlite_prefs` (`MODE_PRIVATE`), offline feeds (`cacheDir/json_store`), and cached media scoped strictly to the app sandbox.
 
 #### 4. Two-Stage Verified OTA & Native APK Updater
 - **Atomic Live Interface Updates**: Smaller HTML/JS parser fixes write atomically to `filesDir/live_index.html`, with immediate rollback via **Revert to Bundled Version**.
@@ -254,9 +264,9 @@ flowchart TD
 | Security & Policy Gate | Pure-JVM `XLitePolicy` HTTPS/host/path/transaction guard, `allowBackup="false"`, `MODE_PRIVATE` prefs, `FileProvider` |
 | Updater Pipeline | Atomic `filesDir/live_index.html` OTA web bundle + SHA-256 (`SHA256SUMS.txt`) & `versionCode` verified APK installer |
 | Testing & Static Analysis | JUnit4 (`XLiteUnitTest.kt`), Android Lint (`lintRelease`), Node standard-library test suites (`scripts/*.cjs`), CodeQL SAST |
-| Supply Chain & Dependency Graph | Pinned Gradle coordinates, `.github/dependabot.yml` (`/` & `/app`), Gradle Dependency Submission (`Insights → Dependency graph`) |
+| Supply Chain & Dependency Graph | Pinned Gradle coordinates, `.github/dependabot.yml` (`/android` & `/android/app`), Gradle Dependency Submission (`Insights → Dependency graph`) |
 
-See also: [Contributing](CONTRIBUTING.md) · [Security Policy](SECURITY.md) · [Dependency Security](docs/dependency-security.md) · [Code of Conduct](CODE_OF_CONDUCT.md) · [v1.0.25 Release Notes](docs/releases/v1.0.25.md)
+See also: [Contributing](.github/CONTRIBUTING.md) · [Security Policy](.github/SECURITY.md) · [Dependency Security](docs/dependency-security.md) · [Code of Conduct](.github/CODE_OF_CONDUCT.md) · [v1.0.25 Release Notes](docs/releases/v1.0.25.md)
 
 ---
 
