@@ -27,7 +27,7 @@
 
 ---
 
-## Downloads (v1.0.29)
+## Downloads (v1.0.30)
 
 X Lite ships as a standalone signed Android APK with zero external analytics SDKs or background ad trackers.
 
@@ -127,7 +127,7 @@ xlite-android/
 │   ├── logo.svg                              # Vector application emblem
 │   ├── social-preview.svg / .png             # Repository social card (1280x640)
 │   ├── dependency-security.md                # Pinned Maven artifacts, zero-npm audit & SBOM pipeline
-│   ├── releases/v1.0.29.md                   # Release notes for v1.0.29
+│   ├── releases/v1.0.30.md                   # Release notes for v1.0.30
 │   └── screenshots/                          # Real Android device WebP screenshots (feed, thread)
 └── .github/
     ├── CODE_OF_CONDUCT.md
@@ -266,7 +266,7 @@ flowchart TD
 | Testing & Static Analysis | JUnit4 (`XLiteUnitTest.kt`), Android Lint (`lintRelease`), Node standard-library test suites (`scripts/*.cjs`), CodeQL SAST |
 | Supply Chain & Dependency Graph | Pinned Gradle coordinates, `.github/dependabot.yml` (`/android` & `/android/app`), Gradle Dependency Submission (`Insights → Dependency graph`) |
 
-See also: [Contributing](.github/CONTRIBUTING.md) · [Security Policy](.github/SECURITY.md) · [Dependency Security](docs/dependency-security.md) · [Code of Conduct](.github/CODE_OF_CONDUCT.md) · [v1.0.29 Release Notes](docs/releases/v1.0.29.md)
+See also: [Contributing](.github/CONTRIBUTING.md) · [Security Policy](.github/SECURITY.md) · [Dependency Security](docs/dependency-security.md) · [Code of Conduct](.github/CODE_OF_CONDUCT.md) · [v1.0.30 Release Notes](docs/releases/v1.0.30.md)
 
 ---
 

@@ -1952,9 +1952,9 @@ let isFetching = false;
 let pendingCallbacks = {};
 const pendingActionLocks = {};
 const activeImageLoads = new Set();
-const APP_VERSION = '1.0.29';
-const APP_BUILD = '2026.11.13.14';
-const LATEST_APK_VERSION = '1.0.29';
+const APP_VERSION = '1.0.30';
+const APP_BUILD = '2026.11.13.15';
+const LATEST_APK_VERSION = '1.0.30';
 const LATEST_APK_URL = 'https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk';
 const LATEST_APK_SHA256 = '';
 let activeApkDownloadState = null;
@@ -1966,6 +1966,9 @@ const FEED_PAGE_SIZE = 6;
 const FEED_RICH_PAGE_SIZE = 20;
 const VIEWER_KEY = 'xlite_viewer_v1';
 const SEEN_FORYOU_KEY = 'xlite_seen_foryou_v1';
+const SEEN_PENDING_KEY = 'xlite_pending_seen_v1';
+const SEEN_FORYOU_CACHE_KEY = 'seen_foryou_ids';
+const SEEN_PENDING_CACHE_KEY = 'seen_pending_ids';
 const TX_CACHE_KEY = 'pref_tx_cache_v1';
 const TX_STORAGE_KEY = 'xlite_tx_cache_v1';
 const TX_ONDEMAND_PREFIX = 'pref_tx_ondemand_';
@@ -1996,11 +1999,18 @@ let lightboxState = null;
 let seenForYouIds = new Set();
 let pendingSeenTweetIds = [];
 const pendingSeenSet = new Set();
+const pendingSeenInFlight = new Set();
 let seenLingerEvents = [];
 const seenLingerQueued = new Set();
 const seenDwellTimers = new Map();
 let seenFlushTimer = null;
+let seenHomeSyncTimer = null;
+let seenHomeSyncInFlight = false;
+let seenHomeSyncQueued = false;
+let jotSequenceStartMs = Date.now();
+let jotSequenceNumber = 0;
 let seenTweetObserver = null;
+const prebufferedNextPage = { foryou: null, following: null };
 let videoAutoPauseObserver = null;
 let videoPreloadObserver = null;
 let feedAutoLoaderObserver = null;
@@ -2018,12 +2028,12 @@ const TIMELINE_CONFIG = {
     following: {
         queryId: '2ee46L1AFXmnTa0EvUog-Q',
         op: 'HomeLatestTimeline',
-        buildVariables: (count, cursor, seenTweetIds) => {
+        buildVariables: (count, cursor, seenTweetIds, requestContext) => {
             let v = {
                 count: count || FEED_PAGE_SIZE,
                 includePromotedContent: false,
                 latestControlAvailable: true,
-                requestContext: 'launch'
+                requestContext: requestContext || (cursor ? 'scroll' : 'launch')
             };
             if (Array.isArray(seenTweetIds) && seenTweetIds.length) v.seenTweetIds = seenTweetIds;
             if (cursor) v.cursor = cursor;
@@ -2034,13 +2044,13 @@ const TIMELINE_CONFIG = {
         queryId: 'KmJCeZ__ef1fNos7tKN_fg',
         fallbackQueryId: 'fedFLLzmiCAuzPgA8lyh8Q',
         op: 'HomeTimeline',
-        buildVariables: (count, cursor, seenTweetIds) => {
+        buildVariables: (count, cursor, seenTweetIds, requestContext, extraFlags) => {
             let v = {
                 count: count || FEED_PAGE_SIZE,
                 includePromotedContent: false,
-                requestContext: 'launch',
+                requestContext: requestContext || (cursor ? 'scroll' : 'launch'),
                 seenTweetIds: Array.isArray(seenTweetIds) ? seenTweetIds : [],
-                withCommunity: true
+                withCommunity: extraFlags && extraFlags.withCommunity !== undefined ? extraFlags.withCommunity : true
             };
             if (cursor) v.cursor = cursor;
             return v;
@@ -2383,20 +2393,69 @@ function updateHeaderActions() {
     }
 }
 
-function loadSeenForYouIds() {
+function parseSeenIdArray(raw) {
+    if (!raw) return [];
     try {
-        const raw = localStorage.getItem(SEEN_FORYOU_KEY);
-        const arr = raw ? JSON.parse(raw) : [];
-        if (Array.isArray(arr)) seenForYouIds = new Set(arr.slice(-800).map(String));
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed.map(String).filter(id => /^\d+$/.test(id));
+    } catch (_) { return []; }
+}
+
+function loadSeenForYouIds() {
+    seenForYouIds = new Set();
+    pendingSeenTweetIds = [];
+    pendingSeenSet.clear();
+    pendingSeenInFlight.clear();
+    try {
+        const lsSeen = typeof localStorage !== 'undefined' ? parseSeenIdArray(localStorage.getItem(SEEN_FORYOU_KEY)) : [];
+        const nativeSeen = window.AndroidBridge && typeof AndroidBridge.getCache === 'function'
+            ? parseSeenIdArray(AndroidBridge.getCache(SEEN_FORYOU_CACHE_KEY))
+            : [];
+        seenForYouIds = new Set(nativeSeen.concat(lsSeen).slice(-2000));
     } catch (_) { seenForYouIds = new Set(); }
+    try {
+        const lsPending = typeof localStorage !== 'undefined' ? parseSeenIdArray(localStorage.getItem(SEEN_PENDING_KEY)) : [];
+        const nativePending = window.AndroidBridge && typeof AndroidBridge.getCache === 'function'
+            ? parseSeenIdArray(AndroidBridge.getCache(SEEN_PENDING_CACHE_KEY))
+            : [];
+        for (const id of nativePending.concat(lsPending)) {
+            seenForYouIds.add(id);
+            if (!pendingSeenSet.has(id)) {
+                pendingSeenSet.add(id);
+                pendingSeenTweetIds.push(id);
+            }
+        }
+        if (pendingSeenTweetIds.length > 1500) {
+            pendingSeenTweetIds = pendingSeenTweetIds.slice(-1500);
+            pendingSeenSet.clear();
+            pendingSeenTweetIds.forEach(id => pendingSeenSet.add(id));
+        }
+    } catch (_) {}
+}
+
+function savePendingSeenIds() {
+    try {
+        const list = pendingSeenTweetIds.slice(-1500);
+        const serialized = JSON.stringify(list);
+        if (typeof localStorage !== 'undefined') localStorage.setItem(SEEN_PENDING_KEY, serialized);
+        if (window.AndroidBridge && typeof AndroidBridge.saveCache === 'function') {
+            AndroidBridge.saveCache(SEEN_PENDING_CACHE_KEY, list.length ? serialized : '');
+        }
+    } catch (_) {}
 }
 
 function saveSeenForYouIds() {
     try {
-        const list = Array.from(seenForYouIds).slice(-800);
-        if (seenForYouIds.size > 800) seenForYouIds = new Set(list);
-        localStorage.setItem(SEEN_FORYOU_KEY, JSON.stringify(list));
+        const list = Array.from(seenForYouIds).slice(-2000);
+        if (seenForYouIds.size > 2000) seenForYouIds = new Set(list);
+        const serialized = JSON.stringify(list);
+        if (typeof localStorage !== 'undefined') localStorage.setItem(SEEN_FORYOU_KEY, serialized);
+        if (window.AndroidBridge && typeof AndroidBridge.saveCache === 'function') {
+            AndroidBridge.saveCache(SEEN_FORYOU_CACHE_KEY, list.length ? serialized : '');
+        }
     } catch (_) {}
+    savePendingSeenIds();
 }
 
 let seenSaveDebounce = null;
@@ -2405,64 +2464,250 @@ function scheduleSaveSeenIds() {
     seenSaveDebounce = setTimeout(() => {
         seenSaveDebounce = null;
         saveSeenForYouIds();
-    }, 1500);
+    }, 800);
 }
 
-function markTweetSeen(twId, sectionName, dwellMs) {
-    const idStr = String(twId || '');
-    if (!idStr || !/^\d+$/.test(idStr)) return;
+/** Clears local seen-post state and optional persisted cross-app sync queues. */
+function clearLocalSeenState(clearPersisted = true) {
+    if (seenSaveDebounce) { clearTimeout(seenSaveDebounce); seenSaveDebounce = null; }
+    if (seenFlushTimer) { clearTimeout(seenFlushTimer); seenFlushTimer = null; }
+    if (seenHomeSyncTimer) { clearTimeout(seenHomeSyncTimer); seenHomeSyncTimer = null; }
+    seenHomeSyncInFlight = false;
+    seenHomeSyncQueued = false;
+    pendingSeenTweetIds = [];
+    pendingSeenSet.clear();
+    pendingSeenInFlight.clear();
+    seenLingerEvents = [];
+    seenLingerQueued.clear();
+    prebufferedNextPage.foryou = null;
+    prebufferedNextPage.following = null;
+    if (clearPersisted) {
+        seenForYouIds.clear();
+        try {
+            if (typeof localStorage !== 'undefined') {
+                localStorage.removeItem(SEEN_FORYOU_KEY);
+                localStorage.removeItem(SEEN_PENDING_KEY);
+            }
+            if (window.AndroidBridge && typeof AndroidBridge.saveCache === 'function') {
+                AndroidBridge.saveCache(SEEN_FORYOU_CACHE_KEY, '');
+                AndroidBridge.saveCache(SEEN_PENDING_CACHE_KEY, '');
+            }
+        } catch (_) {}
+    }
+}
+
+function isTweetSeenForYou(tw) {
+    if (!tw) return false;
+    if (seenForYouIds.has(String(tw.id))) return true;
+    return !!(tw.outer_id && seenForYouIds.has(String(tw.outer_id)));
+}
+
+function enqueueSeenTweetId(rawId) {
+    const idStr = String(rawId || '');
+    if (!idStr || !/^\d+$/.test(idStr)) return '';
     seenForYouIds.add(idStr);
-    scheduleSaveSeenIds();
-    if (!shouldSyncSeen()) return;
-    if (!pendingSeenSet.has(idStr)) {
+    if (seenForYouIds.size > 2200) {
+        seenForYouIds = new Set(Array.from(seenForYouIds).slice(-2000));
+    }
+    if (shouldSyncSeen() && !pendingSeenSet.has(idStr) && !pendingSeenInFlight.has(idStr)) {
         pendingSeenSet.add(idStr);
         pendingSeenTweetIds.push(idStr);
-        if (pendingSeenTweetIds.length > 1500) pendingSeenTweetIds.shift();
+        if (pendingSeenTweetIds.length > 1500) {
+            const dropped = pendingSeenTweetIds.shift();
+            if (dropped) pendingSeenSet.delete(dropped);
+        }
     }
+    return idStr;
+}
+
+function buildJotClientEvent(idStr, authorId, sectionName, elementName, actionName, dwellMs, now) {
+    const seqNum = ++jotSequenceNumber;
+    const item = {
+        item_type: 0,
+        id: idStr,
+        is_viewer_follows_tweet_author: sectionName === 'latest'
+    };
+    if (authorId && /^\d+$/.test(String(authorId))) {
+        item.author_id = String(authorId);
+    }
+    if (elementName === 'linger') {
+        const dwell = Math.max(220, Math.min(30000, Number(dwellMs) || 500));
+        item.impression_details = {
+            visibility_start: now - dwell,
+            visibility_end: now,
+            percent_screen_height_100k: 50000
+        };
+    }
+    return {
+        _category_: 'client_event',
+        format_version: 2,
+        triggered_on: now,
+        client_app_id: '3033300',
+        client_event_sequence_start_timestamp: jotSequenceStartMs,
+        client_event_sequence_number: seqNum,
+        event_namespace: {
+            client: 'm5',
+            page: 'home',
+            section: sectionName || (currentTab === 'foryou' ? 'home' : 'latest'),
+            component: 'stream',
+            element: elementName,
+            action: actionName
+        },
+        items: [item]
+    };
+}
+
+/** Schedules or triggers background HomeTimeline seenTweetIds sync for X app parity. */
+function scheduleSeenHomeSync(immediate = false) {
+    if (!shouldSyncSeen() || !supportsSignedPostTimelines() || !pendingSeenTweetIds.length) return;
+    if (!appConfig.auth_token || !appConfig.ct0) return;
+    if (immediate) {
+        if (seenHomeSyncTimer) { clearTimeout(seenHomeSyncTimer); seenHomeSyncTimer = null; }
+        flushSeenToHomeTimeline(false);
+        return;
+    }
+    if (seenHomeSyncTimer) return;
+    seenHomeSyncTimer = setTimeout(() => {
+        seenHomeSyncTimer = null;
+        flushSeenToHomeTimeline(false);
+    }, 5500);
+}
+
+function markTweetSeen(twId, sectionName, dwellMs, extraIds) {
+    const idStr = enqueueSeenTweetId(twId);
+    if (!idStr) return;
+    const tw = allTweetsMap[idStr] || null;
+    if (tw?.outer_id) enqueueSeenTweetId(tw.outer_id);
+    if (tw?.quoted?.id) enqueueSeenTweetId(tw.quoted.id);
+    if (Array.isArray(extraIds)) {
+        extraIds.forEach(eid => enqueueSeenTweetId(eid));
+    }
+    scheduleSaveSeenIds();
+    if (!shouldSyncSeen()) return;
+
     if (!seenLingerQueued.has(idStr)) {
         seenLingerQueued.add(idStr);
         const now = Date.now();
-        const dwell = Math.max(450, Math.min(30000, Number(dwellMs) || 500));
-        seenLingerEvents.push({
-            _category_: 'client_event',
-            format_version: 2,
-            triggered_on: now,
-            event_namespace: {
-                page: 'home',
-                section: sectionName || (currentTab === 'foryou' ? 'home' : 'latest'),
-                component: 'tweet',
-                element: 'linger',
-                action: 'results'
-            },
-            items: [{
-                item_type: 0,
-                id: idStr,
-                impression_details: {
-                    visibility_start: now - dwell,
-                    visibility_end: now,
-                    percent_screen_height_100k: 50000
-                }
-            }]
-        });
+        const section = sectionName || (currentTab === 'foryou' ? 'home' : 'latest');
+        const authorId = tw?.user_id || '';
+        seenLingerEvents.push(buildJotClientEvent(idStr, authorId, section, 'tweet', 'results', dwellMs, now));
+        seenLingerEvents.push(buildJotClientEvent(idStr, authorId, section, 'linger', 'results', dwellMs, now));
         if (seenLingerEvents.length >= 12) {
             flushSeenLinger(false);
         } else if (!seenFlushTimer) {
             seenFlushTimer = setTimeout(() => {
                 seenFlushTimer = null;
                 flushSeenLinger(false);
-            }, 5000);
+            }, 4000);
         }
     }
+    scheduleSeenHomeSync(pendingSeenTweetIds.length >= 10);
+}
+
+function takePendingSeenBatch(limit = 150) {
+    if (seenHomeSyncTimer) {
+        clearTimeout(seenHomeSyncTimer);
+        seenHomeSyncTimer = null;
+    }
+    if (!shouldSyncSeen() || !pendingSeenTweetIds.length) return [];
+    const batch = pendingSeenTweetIds.splice(0, limit);
+    for (const id of batch) {
+        pendingSeenSet.delete(id);
+        pendingSeenInFlight.add(id);
+    }
+    return batch;
 }
 
 function consumePendingSeenBatch(limit = 100) {
-    if (!shouldSyncSeen() || !pendingSeenTweetIds.length) return [];
-    return pendingSeenTweetIds.splice(0, limit);
+    return takePendingSeenBatch(limit);
+}
+
+function confirmPendingSeenBatch(ids) {
+    if (!Array.isArray(ids) || !ids.length) return;
+    for (const id of ids) pendingSeenInFlight.delete(String(id));
+    saveSeenForYouIds();
 }
 
 function requeueSeenBatch(ids) {
     if (!Array.isArray(ids) || !ids.length) return;
-    pendingSeenTweetIds = ids.concat(pendingSeenTweetIds).slice(0, 1500);
+    const fresh = [];
+    for (const rawId of ids) {
+        const id = String(rawId || '');
+        pendingSeenInFlight.delete(id);
+        if (id && !pendingSeenSet.has(id)) {
+            pendingSeenSet.add(id);
+            fresh.push(id);
+        }
+    }
+    if (fresh.length) {
+        pendingSeenTweetIds = fresh.concat(pendingSeenTweetIds).slice(0, 1500);
+    }
+    saveSeenForYouIds();
+}
+
+/** Flushes queued seenTweetIds to X's HomeTimeline so Manhattan/Bloom stores stay synced with the main X app. */
+function flushSeenToHomeTimeline(forceHide = false) {
+    if (seenHomeSyncTimer) {
+        clearTimeout(seenHomeSyncTimer);
+        seenHomeSyncTimer = null;
+    }
+    if (!shouldSyncSeen() || !supportsSignedPostTimelines() || !pendingSeenTweetIds.length) return;
+    if (!appConfig.auth_token || !appConfig.ct0) return;
+    if (seenHomeSyncInFlight && !forceHide) {
+        seenHomeSyncQueued = true;
+        return;
+    }
+
+    const cfg = TIMELINE_CONFIG.foryou;
+    if (!cfg) return;
+    const batch = takePendingSeenBatch(150);
+    if (!batch.length) return;
+
+    const targetCursor = (!forceHide && currentView === 'feed' && currentTab === 'foryou' && cursors.foryou && !isFetching && !prebufferedNextPage.foryou)
+        ? cursors.foryou
+        : null;
+    const variables = targetCursor
+        ? cfg.buildVariables(getFeedPageSize(), targetCursor, batch, 'scroll', { withCommunity: true })
+        : cfg.buildVariables(1, null, batch, 'scroll', { withCommunity: false });
+
+    seenHomeSyncInFlight = true;
+    const dispatchSync = (queryId, onDone) => {
+        const path = `/i/api/graphql/${queryId}/${cfg.op}`;
+        const payload = JSON.stringify({ variables, features: GRAPHQL_FEATURES, queryId });
+        performSignedPost(path, payload, onDone);
+    };
+
+    const handleSyncDone = (resStr, allowFallback) => {
+        try {
+            const parsed = parseTwitterGraphql(resStr);
+            if (parsed.error) {
+                if (allowFallback && cfg.fallbackQueryId && isQueryIdFailure(parsed)) {
+                    dispatchSync(cfg.fallbackQueryId, (fbStr) => handleSyncDone(fbStr, false));
+                    return;
+                }
+                requeueSeenBatch(batch);
+                seenHomeSyncInFlight = false;
+                seenHomeSyncQueued = false;
+                return;
+            }
+            confirmPendingSeenBatch(batch);
+            if (targetCursor && parsed.tweets && parsed.tweets.length > 0 && currentView === 'feed' && currentTab === 'foryou' && cursors.foryou === targetCursor && !prebufferedNextPage.foryou) {
+                prebufferedNextPage.foryou = { forCursor: targetCursor, parsed };
+            }
+        } catch (_) {
+            requeueSeenBatch(batch);
+            seenHomeSyncInFlight = false;
+            seenHomeSyncQueued = false;
+            return;
+        }
+        seenHomeSyncInFlight = false;
+        if (seenHomeSyncQueued || pendingSeenTweetIds.length >= 10) {
+            seenHomeSyncQueued = false;
+            flushSeenToHomeTimeline(forceHide);
+        }
+    };
+
+    dispatchSync(cfg.queryId, (resStr) => handleSyncDone(resStr, true));
 }
 
 function flushSeenLinger(force = false) {
@@ -2476,6 +2721,7 @@ function flushSeenLinger(force = false) {
     const batch = seenLingerEvents.splice(0, 40);
     const body = 'category=client_event&log=' + encodeURIComponent(JSON.stringify(batch));
     performSignedFormPost('/i/api/1.1/jot/client_event.json', body, (resStr) => {
+        if (!resStr) return;
         try {
             const parsed = JSON.parse(resStr);
             if (parsed && parsed.error && parsed.status !== 200) {
@@ -2494,34 +2740,44 @@ function disconnectSeenObserver() {
     seenDwellTimers.clear();
 }
 
-function initSeenObserver(rootEl) {
-    disconnectSeenObserver();
+function initSeenObserver(rootEl, isAppend = false) {
+    if (!isAppend || !seenTweetObserver) {
+        disconnectSeenObserver();
+    }
     if (typeof IntersectionObserver !== 'function') return;
     const container = rootEl || document.getElementById('feedContainer') || document.getElementById('mainContent');
     if (!container) return;
-    const sectionName = currentTab === 'foryou' ? 'home' : 'latest';
-    seenTweetObserver = new IntersectionObserver((entries) => {
-        entries.forEach((entry) => {
-            const twId = entry.target?.dataset?.id;
-            if (!twId) return;
-            if (entry.isIntersecting && entry.intersectionRatio >= 0.35) {
-                if (!seenDwellTimers.has(twId)) {
-                    const start = Date.now();
-                    const timer = setTimeout(() => {
-                        seenDwellTimers.delete(twId);
-                        markTweetSeen(twId, sectionName, Date.now() - start);
-                        if (seenTweetObserver) try { seenTweetObserver.unobserve(entry.target); } catch (_) {}
-                    }, 450);
-                    seenDwellTimers.set(twId, timer);
+    if (!seenTweetObserver) {
+        seenTweetObserver = new IntersectionObserver((entries) => {
+            const sectionName = currentTab === 'foryou' ? 'home' : 'latest';
+            entries.forEach((entry) => {
+                const target = entry.target;
+                const twId = target?.dataset?.id;
+                if (!twId) return;
+                if (entry.isIntersecting && entry.intersectionRatio >= 0.15) {
+                    if (!seenDwellTimers.has(twId) && !seenLingerQueued.has(twId)) {
+                        const start = Date.now();
+                        const timer = setTimeout(() => {
+                            seenDwellTimers.delete(twId);
+                            const extraRaw = target.dataset?.seenExtra || '';
+                            const extras = extraRaw ? extraRaw.split(',').filter(Boolean) : [];
+                            markTweetSeen(twId, sectionName, Date.now() - start, extras);
+                            if (seenTweetObserver) try { seenTweetObserver.unobserve(target); } catch (_) {}
+                        }, 220);
+                        seenDwellTimers.set(twId, timer);
+                    }
+                } else if (seenDwellTimers.has(twId)) {
+                    clearTimeout(seenDwellTimers.get(twId));
+                    seenDwellTimers.delete(twId);
                 }
-            } else if (seenDwellTimers.has(twId)) {
-                clearTimeout(seenDwellTimers.get(twId));
-                seenDwellTimers.delete(twId);
-            }
-        });
-    }, { threshold: [0.35] });
+            });
+        }, { threshold: [0.15, 0.35] });
+    }
     container.querySelectorAll('.tweet[data-id]').forEach((el) => {
-        if (/^\d+$/.test(el.dataset.id)) seenTweetObserver.observe(el);
+        if (!el.dataset.seenObserved && /^\d+$/.test(el.dataset.id)) {
+            el.dataset.seenObserved = '1';
+            seenTweetObserver.observe(el);
+        }
     });
 }
 
@@ -2840,6 +3096,7 @@ function init() {
             if (document.visibilityState === 'hidden') {
                 saveSeenForYouIds();
                 flushSeenLinger(true);
+                flushSeenToHomeTimeline(true);
                 pauseAllFeedVideos();
             }
         });
@@ -2848,6 +3105,7 @@ function init() {
         window.addEventListener('pagehide', () => {
             saveSeenForYouIds();
             flushSeenLinger(true);
+            flushSeenToHomeTimeline(true);
         });
     }
     try {
@@ -2865,6 +3123,7 @@ function init() {
         nav('settings');
     } else {
         loadFeed(currentTab);
+        if (pendingSeenTweetIds.length > 0) scheduleSeenHomeSync(false);
         if (!searchTransactionClient) prepareXTransaction(() => {});
     }
 }
@@ -3120,6 +3379,13 @@ function nav(view) {
     }
     if (view !== 'post') composeQuoteTweetId = null;
     if (view !== 'feed') {
+        if (currentView === 'feed') {
+            saveSeenForYouIds();
+            flushSeenLinger(false);
+            flushSeenToHomeTimeline(false);
+        }
+        prebufferedNextPage.foryou = null;
+        prebufferedNextPage.following = null;
         disconnectSeenObserver();
         disconnectFeedAutoLoader();
         pauseAllFeedVideos();
@@ -3155,6 +3421,13 @@ function nav(view) {
 }
 
 function switchFeed(tab) {
+    if (currentTab === 'foryou' && tab !== 'foryou') {
+        saveSeenForYouIds();
+        flushSeenLinger(false);
+        flushSeenToHomeTimeline(false);
+    }
+    prebufferedNextPage.foryou = null;
+    prebufferedNextPage.following = null;
     savedFeedMarkup = '';
     savedFeedNodes = null;
     activeThreadTweetId = null;
@@ -3851,6 +4124,7 @@ function renderLightboxFrame() {
 
 function openLightbox(twId, idx, event) {
     if (event && event.stopPropagation) event.stopPropagation();
+    if (twId) markTweetSeen(twId);
     const tw = findTweetById(twId);
     const photos = (tw?.media || []).filter(m => m && m.type !== 'video' && m.type !== 'animated_gif' && m.url);
     if (!photos.length) return;
@@ -3909,6 +4183,8 @@ if (typeof document !== 'undefined' && document.addEventListener) {
 }
 
 function pauseOtherVideos(activeVid) {
+    const activeTweetId = activeVid?.closest?.('.tweet')?.dataset?.id;
+    if (activeTweetId) markTweetSeen(activeTweetId);
     if (typeof document.querySelectorAll !== 'function') return;
     document.querySelectorAll('video.tweet-video').forEach((v) => {
         if (v !== activeVid) {
@@ -4256,9 +4532,13 @@ function renderTweetHtml(tw) {
     const verifiedHtml = verifiedBadgeHtml(tw.user_verified);
     let handleHtml = tw.user_screen_name ? `<span class="tweet-handle">@${escapeHtml(tw.user_screen_name)}</span>` : '';
     let timeHtml = tw.created_at ? `<span class="tweet-dot">&middot;</span><span class="tweet-time">${escapeHtml(tw.created_at)}</span>` : '';
+    const seenExtras = [];
+    if (tw.outer_id && String(tw.outer_id) !== String(tw.id)) seenExtras.push(String(tw.outer_id));
+    if (tw.quoted?.id && String(tw.quoted.id) !== String(tw.id)) seenExtras.push(String(tw.quoted.id));
+    const seenExtraAttr = seenExtras.length ? ` data-seen-extra="${escapeHtml(seenExtras.join(','))}"` : '';
 
     return `
-    <div class="tweet" data-id="${escapeHtml(tw.id)}">
+    <div class="tweet" data-id="${escapeHtml(tw.id)}"${seenExtraAttr}>
         ${rtHtml}
         <div class="tweet-header">
             ${renderAvatarHtml(tw)}
@@ -4578,9 +4858,11 @@ function parseSingleTweet(tw) {
             let p = parseSingleTweet(orig);
             if (p) {
                 p.is_retweet = true;
+                if (!p.outer_id) p.outer_id = id;
                 let retweeter = extractUser(tw);
                 p.retweeted_by = retweeter.name || retweeter.screen_name || 'Someone';
                 allTweetsMap[p.id] = p;
+                if (id !== p.id) allTweetsMap[id] = p;
                 return p;
             }
         }
@@ -4700,14 +4982,15 @@ function refreshFeed() {
         if (isFetching.endsWith(':true')) setFeedProgress(false, 'Loading more posts. Refresh again shortly.');
         return;
     }
+    prebufferedNextPage[currentTab] = null;
     if (document.getElementById('feedContainer')) {
-        fetchFeedData(currentTab, false);
+        fetchFeedData(currentTab, false, { requestContext: 'ptr' });
     } else {
-        loadFeed(currentTab, true);
+        loadFeed(currentTab, true, false, { requestContext: 'ptr' });
     }
 }
 
-function loadFeed(feedType, forceRefresh = false, preserveStatus = false) {
+function loadFeed(feedType, forceRefresh = false, preserveStatus = false, options = {}) {
     const container = document.getElementById('mainContent');
 
     if (feedType === 'cache') {
@@ -4750,20 +5033,30 @@ function loadFeed(feedType, forceRefresh = false, preserveStatus = false) {
     }
 
     let hasCached = false;
+    let cachedTotal = 0;
+    let seenInCacheCount = 0;
     if (cachedFeed) {
         try {
             let list = JSON.parse(cachedFeed);
             if (Array.isArray(list) && shouldHideAds()) list = list.filter(t => t && !t.is_ad);
             if (list && list.length > 0) {
-                currentTweetsList = list;
-                cursors[feedType] = window.AndroidBridge ? AndroidBridge.getCache('feed_cursor_' + feedType) || null : null;
-                usedFeedCursors[feedType].clear();
-                list.forEach(t => { if (t && t.id) allTweetsMap[t.id] = t; });
-                container.innerHTML = feedToolbar() + '<div id="feedContainer">' + list.map(renderTweetHtml).join('') + '</div>';
-                hasCached = true;
-                initSeenObserver(document.getElementById('feedContainer'));
-                initVideoAutoPauseObserver(container);
-                renderLoadMoreButton(feedType);
+                cachedTotal = list.length;
+                if (feedType === 'foryou' && shouldSyncSeen() && seenForYouIds.size > 0) {
+                    const unseenCached = list.filter(t => t && !isTweetSeenForYou(t));
+                    seenInCacheCount = cachedTotal - unseenCached.length;
+                    list = unseenCached;
+                }
+                if (list.length > 0) {
+                    currentTweetsList = list;
+                    cursors[feedType] = window.AndroidBridge ? AndroidBridge.getCache('feed_cursor_' + feedType) || null : null;
+                    usedFeedCursors[feedType].clear();
+                    list.forEach(t => { if (t && t.id) allTweetsMap[t.id] = t; });
+                    container.innerHTML = feedToolbar() + '<div id="feedContainer">' + list.map(renderTweetHtml).join('') + '</div>';
+                    hasCached = true;
+                    initSeenObserver(document.getElementById('feedContainer'));
+                    initVideoAutoPauseObserver(container);
+                    renderLoadMoreButton(feedType);
+                }
             }
         } catch (e) {}
     }
@@ -4774,21 +5067,28 @@ function loadFeed(feedType, forceRefresh = false, preserveStatus = false) {
         container.innerHTML = '<div class="spinner">Loading...</div>';
     } else if (!forceRefresh) {
         const lastUpdated = Number(window.AndroidBridge ? AndroidBridge.getCache('feed_updated_' + feedType) : localStorage.getItem('feed_updated_' + feedType));
-        if (lastUpdated && Date.now() - lastUpdated < FEED_REFRESH_MS) {
+        const shouldBypassForYouCooldown = feedType === 'foryou' && shouldSyncSeen() && (
+            pendingSeenTweetIds.length > 0 ||
+            (cachedTotal > 0 && (seenInCacheCount >= Math.max(1, Math.floor(cachedTotal / 2)) || currentTweetsList.length < 4))
+        );
+        if (!shouldBypassForYouCooldown && lastUpdated && Date.now() - lastUpdated < FEED_REFRESH_MS) {
             setFeedProgress(false, '');
             return;
         }
     }
 
-    fetchFeedData(feedType, false);
+    fetchFeedData(feedType, false, options);
 }
 
-function fetchFeedData(feedType, isPaging) {
+function fetchFeedData(feedType, isPaging, options = {}) {
     const generation = viewGeneration;
     const requestKey = feedType + ':' + generation + ':' + isPaging;
     if (isFetching && isFetching.startsWith(feedType + ':' + generation + ':')) return;
     isFetching = requestKey;
-    if (!isPaging) setFeedProgress(true, 'Checking for new posts…');
+    if (!isPaging) {
+        prebufferedNextPage[feedType] = null;
+        setFeedProgress(true, options.skipPageDepth ? 'Skipping already-seen posts…' : 'Checking for new posts…');
+    }
 
     const cfg = TIMELINE_CONFIG[feedType];
     if (!cfg) {
@@ -4797,10 +5097,16 @@ function fetchFeedData(feedType, isPaging) {
     }
 
     const pageSize = getFeedPageSize();
-    const cursor = isPaging ? cursors[feedType] : null;
+    const cursor = isPaging ? cursors[feedType] : (options.cursorOverride || null);
+    const skipDepth = Number(options.skipPageDepth) || 0;
+    const reqContext = options.requestContext || (isPaging || options.cursorOverride ? 'scroll' : 'launch');
     const canPostTimeline = supportsSignedPostTimelines();
-    const seenBatch = (canPostTimeline && shouldSyncSeen()) ? consumePendingSeenBatch(100) : [];
-    const variables = cfg.buildVariables(pageSize, cursor, seenBatch);
+    // Only For You (HomeTimeline) writes X's Manhattan + ImpressionBloomFilter stores, so keep pending IDs intact until HomeTimeline confirms 200 OK.
+    const seenBatch = (feedType === 'foryou' && canPostTimeline && shouldSyncSeen())
+        ? takePendingSeenBatch(150)
+        : (feedType === 'following' && canPostTimeline && shouldSyncSeen() ? pendingSeenTweetIds.slice(0, 100) : []);
+    const shouldConfirmSeen = feedType === 'foryou' && seenBatch.length > 0;
+    const variables = cfg.buildVariables(pageSize, cursor, seenBatch, reqContext);
 
     const dispatchFeedRequest = (queryId, onDone) => {
         const path = `/i/api/graphql/${queryId}/${cfg.op}`;
@@ -4815,10 +5121,17 @@ function fetchFeedData(feedType, isPaging) {
 
     dispatchFeedRequest(cfg.queryId, (resStr) => {
         if (generation !== viewGeneration || currentView !== 'feed' || currentTab !== feedType) {
+            if (isFetching === requestKey) isFetching = false;
             try {
                 const check = parseTwitterGraphql(resStr);
-                if (check.error) requeueSeenBatch(seenBatch);
-            } catch (_) { requeueSeenBatch(seenBatch); }
+                if (check.error) {
+                    if (shouldConfirmSeen) requeueSeenBatch(seenBatch);
+                } else if (shouldConfirmSeen) {
+                    confirmPendingSeenBatch(seenBatch);
+                }
+            } catch (_) {
+                if (shouldConfirmSeen) requeueSeenBatch(seenBatch);
+            }
             return;
         }
         let fallbackPending = false;
@@ -4830,31 +5143,50 @@ function fetchFeedData(feedType, isPaging) {
                     fallbackPending = true;
                     dispatchFeedRequest(cfg.fallbackQueryId, (fbStr) => {
                         if (isFetching === requestKey) isFetching = false;
-                        if (generation !== viewGeneration || currentView !== 'feed' || currentTab !== feedType) return;
+                        if (generation !== viewGeneration || currentView !== 'feed' || currentTab !== feedType) {
+                            try {
+                                const fbCheck = parseTwitterGraphql(fbStr);
+                                if (fbCheck.error) {
+                                    if (shouldConfirmSeen) requeueSeenBatch(seenBatch);
+                                } else if (shouldConfirmSeen) {
+                                    confirmPendingSeenBatch(seenBatch);
+                                }
+                            } catch (_) {
+                                if (shouldConfirmSeen) requeueSeenBatch(seenBatch);
+                            }
+                            return;
+                        }
                         try {
                             let fbParsed = parseTwitterGraphql(fbStr);
                             if (fbParsed.tweets && fbParsed.tweets.length > 0) {
-                                applyFeedTweets(feedType, fbParsed, isPaging);
+                                if (shouldConfirmSeen) confirmPendingSeenBatch(seenBatch);
+                                applyFeedTweets(feedType, fbParsed, isPaging, skipDepth);
                             } else {
-                                requeueSeenBatch(seenBatch);
+                                if (shouldConfirmSeen) {
+                                    if (fbParsed.error) requeueSeenBatch(seenBatch);
+                                    else confirmPendingSeenBatch(seenBatch);
+                                }
                                 displayFeedError(feedType, fbParsed.error ? fbParsed : parsed, isPaging);
                             }
                         } catch (error) {
-                            requeueSeenBatch(seenBatch);
+                            if (shouldConfirmSeen) requeueSeenBatch(seenBatch);
                             displayFeedError(feedType, { error: error.message || 'Could not read feed response' }, isPaging);
                         }
                     });
                     return;
                 }
-                requeueSeenBatch(seenBatch);
+                if (shouldConfirmSeen) requeueSeenBatch(seenBatch);
+                if (isFetching === requestKey) isFetching = false;
                 displayFeedError(feedType, parsed, isPaging);
                 return;
             }
 
-            applyFeedTweets(feedType, parsed, isPaging);
+            if (shouldConfirmSeen) confirmPendingSeenBatch(seenBatch);
+            if (isFetching === requestKey) isFetching = false;
+            applyFeedTweets(feedType, parsed, isPaging, skipDepth);
         } catch(err) {
             console.error("fetchFeedData error:", err);
-            requeueSeenBatch(seenBatch);
+            if (shouldConfirmSeen) requeueSeenBatch(seenBatch);
             displayFeedError(feedType, { error: err.message || 'Could not read feed response' }, isPaging);
         } finally {
             if (isFetching === requestKey && !fallbackPending) isFetching = false;
@@ -4862,7 +5194,7 @@ function fetchFeedData(feedType, isPaging) {
     });
 }
 
-function applyFeedTweets(feedType, parsed, isPaging) {
+function applyFeedTweets(feedType, parsed, isPaging, skipDepth = 0) {
     const container = document.getElementById('mainContent');
     if (parsed.tweets.length === 0 && !isPaging) {
         if (currentTweetsList.length) {
@@ -4874,31 +5206,50 @@ function applyFeedTweets(feedType, parsed, isPaging) {
     }
 
     const usedCursors = usedFeedCursors[feedType];
-    if (isPaging && cursors[feedType]) usedCursors.add(cursors[feedType]);
-    if (!isPaging) usedCursors.clear();
+    if ((isPaging || skipDepth > 0) && cursors[feedType]) usedCursors.add(cursors[feedType]);
+    if (!isPaging && skipDepth === 0) usedCursors.clear();
     const nextCursor = parsed.nextCursor;
     cursors[feedType] = nextCursor && !usedCursors.has(nextCursor) ? nextCursor : null;
 
+    const filterSeenForYou = feedType === 'foryou' && shouldSyncSeen() && seenForYouIds.size > 0;
     if (isPaging) {
         const existingIds = new Set(currentTweetsList.map(t => t.id));
         const freshTweets = parsed.tweets.filter(t => {
-            if (existingIds.has(t.id)) return false;
+            if (!t || existingIds.has(t.id)) return false;
+            if (filterSeenForYou && isTweetSeenForYou(t)) return false;
             existingIds.add(t.id);
             return true;
         });
         currentTweetsList.push(...freshTweets);
         parsed.tweets.forEach(t => { if (t && t.id) allTweetsMap[t.id] = t; });
         let feedDiv = document.getElementById('feedContainer');
-        if (feedDiv) {
+        if (feedDiv && freshTweets.length > 0) {
             feedDiv.insertAdjacentHTML('beforeend', freshTweets.map(renderTweetHtml).join(''));
+        }
+        if (freshTweets.length === 0 && cursors[feedType] && skipDepth < 2) {
+            fetchFeedData(feedType, true, { skipPageDepth: skipDepth + 1 });
+            return;
         }
         setFeedProgress(false, freshTweets.length ? '' : cursors[feedType] ? 'No new posts on this page. Load more to continue.' : 'No more posts.');
         showStatus('', false);
+        initSeenObserver(document.getElementById('feedContainer'), true);
     } else {
         let sourceTweets = parsed.tweets;
-        if (feedType === 'foryou' && shouldSyncSeen() && seenForYouIds.size > 0) {
-            const unseen = sourceTweets.filter(t => t && !seenForYouIds.has(String(t.id)));
-            if (unseen.length > 0) sourceTweets = unseen;
+        if (filterSeenForYou) {
+            const unseen = sourceTweets.filter(t => t && !isTweetSeenForYou(t));
+            if (unseen.length === 0) {
+                if (cursors[feedType] && skipDepth < 2) {
+                    fetchFeedData(feedType, false, { cursorOverride: cursors[feedType], skipPageDepth: skipDepth + 1, requestContext: 'scroll' });
+                    return;
+                }
+                if (currentTweetsList.length) {
+                    setFeedProgress(false, 'You are caught up on recent posts. Pull down to refresh.', false);
+                } else {
+                    container.innerHTML = feedToolbar() + '<div class="card"><div class="card-title">You\'re caught up</div><p class="card-desc">All returned posts were already seen. Pull down or tap Refresh to check again.</p><button type="button" class="btn btn-secondary" onclick="refreshFeed()">Refresh For You</button></div>';
+                }
+                return;
+            }
+            sourceTweets = unseen;
         }
         const seenIds = new Set();
         currentTweetsList = sourceTweets.filter(t => {
@@ -4917,9 +5268,9 @@ function applyFeedTweets(feedType, parsed, isPaging) {
         }
         container.innerHTML = feedToolbar() + '<div id="feedContainer">' + currentTweetsList.map(renderTweetHtml).join('') + '</div>';
         setFeedProgress(false, 'Updated just now');
+        initSeenObserver(document.getElementById('feedContainer'), false);
     }
 
-    initSeenObserver(document.getElementById('feedContainer'));
     initVideoAutoPauseObserver(container);
     renderLoadMoreButton(feedType);
 }
@@ -4981,6 +5332,13 @@ function renderLoadMoreButton(feedType) {
 function loadMoreTweets(feedType) {
     if (!cursors[feedType]) return;
     if (isFetching && isFetching.startsWith(feedType + ':' + viewGeneration + ':')) return;
+    const pre = prebufferedNextPage[feedType];
+    if (pre && pre.forCursor === cursors[feedType] && pre.parsed) {
+        prebufferedNextPage[feedType] = null;
+        applyFeedTweets(feedType, pre.parsed, true, 0);
+        scheduleSeenHomeSync(false);
+        return;
+    }
     const btn = document.querySelector('#loadMoreBox button');
     if (btn) {
         btn.disabled = true;
@@ -6459,7 +6817,7 @@ function renderSettings() {
 
     <div class="card">
         <div class="card-title">Local Cache</div>
-        <button type="button" class="btn btn-secondary btn-block" onclick="AndroidBridge.clearCache(); alert('Cache cleared');">
+        <button type="button" class="btn btn-secondary btn-block" onclick="clearCachedTweets()">
             Clear Cached Tweets
         </button>
     </div>`;
@@ -6500,6 +6858,14 @@ function handleSettingPrefChange(kind, rawValue) {
     if (label) showStatus('Saved — ' + label, false, 1800);
 }
 
+function clearCachedTweets() {
+    if (window.AndroidBridge && typeof AndroidBridge.clearCache === 'function') AndroidBridge.clearCache();
+    clearLocalSeenState(true);
+    savedFeedMarkup = '';
+    savedFeedNodes = null;
+    alert('Cache cleared');
+}
+
 function saveSettings(e) {
     e.preventDefault();
     const authEl = document.getElementById('cfgAuth');
@@ -6524,10 +6890,12 @@ function saveSettings(e) {
             invalidateXTransaction(true);
             bookmarksCache = [];
             viewerIdentity = null;
-            seenForYouIds.clear();
-            try { localStorage.removeItem(VIEWER_KEY); localStorage.removeItem(SEEN_FORYOU_KEY); } catch (_) {}
+            clearLocalSeenState(true);
+            try { localStorage.removeItem(VIEWER_KEY); } catch (_) {}
         }
         if (typeof AndroidBridge.saveConfig === 'function') AndroidBridge.saveConfig(auth, ct0, mode);
+    } else if (auth !== appConfig.auth_token || ct0 !== appConfig.ct0) {
+        clearLocalSeenState(true);
     }
     saveImageModePref(mode, { skipNative: true });
     appConfig = { auth_token: auth, ct0: ct0, image_mode: mode, avatar_mode: avatarMode, hide_ads: hideAds, sync_seen: syncSeen, autoplay_videos: autoplayVideos };

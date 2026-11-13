@@ -811,7 +811,7 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
     }));
     assert.equal(Array.from(restAdParsed.tweets, t => t.id).join(','), 'rok1', 'REST fallback respects hide_ads');
 
-    vm.runInContext("if (seenSaveDebounce) clearTimeout(seenSaveDebounce); if (seenFlushTimer) clearTimeout(seenFlushTimer);", rCtx);
+    vm.runInContext("if (seenSaveDebounce) clearTimeout(seenSaveDebounce); if (seenFlushTimer) clearTimeout(seenFlushTimer); if (seenHomeSyncTimer) clearTimeout(seenHomeSyncTimer);", rCtx);
 })();
 
 (() => {
@@ -1316,6 +1316,170 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
 })();
 
 let txWarmChecksCompleted = false;
+(() => {
+    // v1.0.30: cross-app seen sync (HomeTimeline + Manhattan/Bloom parity), persistent queues, JOT schema & For You zero-repeat filtering
+    const kv = new Map();
+    const domMap = new Map();
+    const makeDomNode = () => ({ innerHTML: '', textContent: '', style: {}, classList: { toggle() {}, add() {}, remove() {} }, querySelector: () => null, querySelectorAll: () => [], insertAdjacentHTML() {} });
+    ['mainContent', 'feedContainer', 'feedProgress', 'statusBar', 'scrollTopBtn', 'tabNav'].forEach(id => domMap.set(id, makeDomNode()));
+
+    const createSeenHarness = () => {
+        const homePosts = [];
+        const latestPosts = [];
+        const jotPosts = [];
+        const ctx = vm.createContext({
+            console, setTimeout, clearTimeout, Date, Math, JSON, URL, encodeURIComponent, decodeURIComponent, Set, Map, Array,
+            localStorage: {
+                getItem: k => kv.has('ls_' + k) ? kv.get('ls_' + k) : null,
+                setItem: (k, v) => kv.set('ls_' + k, String(v)),
+                removeItem: k => kv.delete('ls_' + k)
+            },
+            history: { scrollRestoration: 'auto', state: null, replaceState() {}, pushState() {} },
+            alert() {},
+            document: {
+                body: { classList: { toggle() {} } },
+                getElementById: id => domMap.get(id) || null,
+                querySelector: () => null,
+                querySelectorAll: () => [],
+                addEventListener() {}
+            },
+            window: {
+                location: { hash: '', pathname: '/', search: '' },
+                scrollY: 0,
+                scrollTo() {},
+                addEventListener() {}
+            },
+            AndroidBridge: null
+        });
+        ctx.window.AndroidBridge = ctx.AndroidBridge = {
+            getCookies: () => JSON.stringify({ auth_token: 'tok', ct0: 'csrf', image_mode: 'auto' }),
+            getCache: k => kv.get(k) || '',
+            saveCache: (k, v) => { if (v) kv.set(k, String(v)); else kv.delete(k); },
+            takeTempResult: () => '',
+            executeGetAsync: () => {},
+            executePostWithTransactionAsync: (url, payload, tid, cbId) => {
+                const parsed = JSON.parse(payload);
+                const entry = { url, payload: parsed, cbId };
+                if (url.endsWith('/HomeTimeline')) homePosts.push(entry);
+                else if (url.endsWith('/HomeLatestTimeline')) latestPosts.push(entry);
+            },
+            executeFormPostWithTransactionAsync: (url, formBody, tid, cbId) => {
+                jotPosts.push({ url, formBody, cbId });
+            }
+        };
+        const txScript = html.split('<script>')[1].split('</script>')[0];
+        vm.runInContext(txScript, ctx);
+        vm.runInContext(script, ctx);
+        vm.runInContext(`
+            appConfig = { auth_token: 'tok', ct0: 'csrf', image_mode: 'auto', avatar_mode: 'mini', hide_ads: true, sync_seen: true, autoplay_videos: true };
+            searchTransactionClient = { generateTransactionId: (m, p) => 'tx_seen_' + m + '_' + p };
+            searchTransactionFetchedAt = Date.now();
+            loadSeenForYouIds();
+            currentView = 'feed';
+        `, ctx);
+        return { ctx, homePosts, latestPosts, jotPosts };
+    };
+
+    const h1 = createSeenHarness();
+    const rtRaw = {
+        rest_id: '900100',
+        core: { user_results: { result: { rest_id: '701', legacy: { name: 'Retweeter', screen_name: 'rter' } } } },
+        legacy: {
+            full_text: 'RT @orig: Breaking update',
+            retweeted_status_result: {
+                result: {
+                    rest_id: '900001',
+                    core: { user_results: { result: { rest_id: '702', legacy: { name: 'Origin', screen_name: 'orig' } } } },
+                    legacy: { full_text: 'Breaking update' }
+                }
+            }
+        }
+    };
+    const rtParsed = vm.runInContext(`parseSingleTweet(${JSON.stringify(rtRaw)})`, h1.ctx);
+    assert.equal(rtParsed.id, '900001');
+    assert.equal(rtParsed.outer_id, '900100', 'Retweet preserves outer_id for cross-app seen sync');
+    const rtHtml = vm.runInContext(`renderTweetHtml(${JSON.stringify(rtParsed)})`, h1.ctx);
+    assert.match(rtHtml, /data-seen-extra="900100"/);
+
+    // 1. Seeing retweet queues both source ID and outer_id, and emits m5/stream JOT payload that tolerates empty 200 body
+    h1.ctx.markTweetSeen('900001', 'home', 600);
+    h1.ctx.flushSeenLinger(true);
+    assert.equal(h1.jotPosts.length, 1);
+    const jotDecoded = decodeURIComponent(h1.jotPosts[0].formBody);
+    assert.match(jotDecoded, /"client":"m5"/);
+    assert.match(jotDecoded, /"component":"stream"/);
+    assert.match(jotDecoded, /"client_app_id":"3033300"/);
+    assert.match(jotDecoded, /"author_id":"702"/);
+    h1.ctx.window.__onAsyncFinish(h1.jotPosts[0].cbId, '');
+    assert.equal(vm.runInContext('seenLingerEvents.length', h1.ctx), 0, 'Empty HTTP 200 body does not requeue JOT batch');
+
+    // 2. Following (HomeLatestTimeline) must NOT drain pendingSeenTweetIds before HomeTimeline receives them
+    vm.runInContext("currentTab = 'following'; fetchFeedData('following', false);", h1.ctx);
+    assert.equal(h1.latestPosts.length, 1);
+    assert.deepEqual(h1.latestPosts[0].payload.variables.seenTweetIds, ['900001', '900100']);
+    h1.ctx.window.__onAsyncFinish(h1.latestPosts[0].cbId, JSON.stringify({
+        data: { home: { home_timeline_urt: { instructions: [{ type: 'TimelineAddEntries', entries: [
+            { entryId: 'tweet-910001', content: { itemContent: { itemType: 'TimelineTweet', tweet_results: { result: { rest_id: '910001', legacy: { full_text: 'Chrono post' } } } } } }
+        ] }] } } }
+    }));
+    const pendingAfterFollowing = Array.from(vm.runInContext('pendingSeenTweetIds', h1.ctx));
+    assert.deepEqual(pendingAfterFollowing, ['900001', '900100'], 'HomeLatestTimeline preserves pendingSeenTweetIds for For You HomeTimeline sync');
+
+    // 3. HomeTimeline HTTP 500 preserves & persists pending IDs across cold reload
+    vm.runInContext("currentTab = 'foryou'; refreshFeed();", h1.ctx);
+    assert.equal(h1.homePosts.length, 1);
+    assert.equal(h1.homePosts[0].payload.variables.requestContext, 'ptr', 'Pull/manual refresh sets requestContext=ptr');
+    h1.ctx.window.__onAsyncFinish(h1.homePosts[0].cbId, JSON.stringify({ error: true, status: 500, message: 'Server error' }));
+
+    const h2 = createSeenHarness();
+    assert.deepEqual(Array.from(vm.runInContext('pendingSeenTweetIds', h2.ctx)), ['900001', '900100'], 'Unsynced seenTweetIds survive app restart until HomeTimeline returns 200 OK');
+    assert.equal(h2.ctx.isTweetSeenForYou({ id: '999999', outer_id: '900100' }), true, 'Detects seen status via outer_id across restarts');
+
+    // 4. Scrolling >= 10 tweets on For You triggers proactive background HomeTimeline sync + prebuffers next cursor page
+    vm.runInContext(`
+        currentTab = 'foryou';
+        cursors.foryou = 'CURSOR_PREBUF';
+    `, h2.ctx);
+    for (let i = 1; i <= 8; i++) h2.ctx.markTweetSeen(String(920000 + i), 'home', 400);
+    assert.equal(h2.homePosts.length, 1, 'Reaching >=10 pending IDs automatically dispatches background HomeTimeline sync');
+    assert.equal(h2.homePosts[0].payload.variables.requestContext, 'scroll');
+    assert.equal(h2.homePosts[0].payload.variables.cursor, 'CURSOR_PREBUF');
+    assert.equal(h2.homePosts[0].payload.variables.seenTweetIds.length, 10);
+
+    h2.ctx.window.__onAsyncFinish(h2.homePosts[0].cbId, JSON.stringify({
+        data: { home: { home_timeline_urt: { instructions: [{ type: 'TimelineAddEntries', entries: [
+            { entryId: 'tweet-900001', content: { itemContent: { itemType: 'TimelineTweet', tweet_results: { result: { rest_id: '900001', legacy: { full_text: 'Repeat seen' } } } } } },
+            { entryId: 'tweet-920999', content: { itemContent: { itemType: 'TimelineTweet', tweet_results: { result: { rest_id: '920999', legacy: { full_text: 'Fresh prebuffered' } } } } } },
+            { entryId: 'cursor-bottom-1', content: { entryType: 'TimelineTimelineCursor', cursorType: 'Bottom', value: 'CURSOR_NEXT_3' } }
+        ] }] } } }
+    }));
+    assert.equal(vm.runInContext('pendingSeenTweetIds.length', h2.ctx), 0, 'Pending IDs drained after HomeTimeline HTTP 200 confirmation');
+    assert.equal(vm.runInContext("prebufferedNextPage.foryou?.forCursor", h2.ctx), 'CURSOR_PREBUF');
+
+    h2.ctx.loadMoreTweets('foryou');
+    assert.equal(h2.homePosts.length, 1, 'loadMoreTweets consumes prebufferedNextPage.foryou with zero extra requests');
+    const renderedIds = Array.from(vm.runInContext('currentTweetsList', h2.ctx), t => t.id);
+    assert.deepEqual(renderedIds, ['920999'], 'Paging deduplicates already-seen tweets (900001 excluded on isPaging)');
+    assert.equal(vm.runInContext('cursors.foryou', h2.ctx), 'CURSOR_NEXT_3');
+
+    // 5. loadFeed('foryou') filters cached seen posts & bypasses 5-min cooldown when cache is mostly seen
+    const cachedMix = [
+        { id: '900001', text: 'Seen cached 1', media: [] },
+        { id: '900002', outer_id: '900100', text: 'Seen cached 2 via outer', media: [] },
+        { id: '930001', text: 'Unseen cached 3', media: [] }
+    ];
+    kv.set('feed_foryou', JSON.stringify(cachedMix));
+    kv.set('feed_updated_foryou', String(Date.now()));
+    vm.runInContext("currentTweetsList = []; cursors.foryou = null;", h2.ctx);
+    h2.ctx.loadFeed('foryou', false);
+    assert.equal(h2.homePosts.length, 2, 'loadFeed(foryou) bypasses 5-min cooldown when most cached tweets are already seen');
+    assert.equal(h2.homePosts[1].payload.variables.requestContext, 'launch');
+    assert.deepEqual(Array.from(vm.runInContext('currentTweetsList', h2.ctx), t => t.id), ['930001'], 'Stale-while-revalidate filters out seen tweets immediately');
+
+    // Cleanup all timers scheduled in harness contexts
+    [h1.ctx, h2.ctx].forEach(c => vm.runInContext("clearLocalSeenState(false);", c));
+})();
+
 process.on('beforeExit', () => {
     assert.equal(txWarmChecksCompleted, true, 'Async warm ClientTransaction checks must finish completely');
 });
