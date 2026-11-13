@@ -1310,10 +1310,11 @@ let isFetching = false;
 let pendingCallbacks = {};
 const pendingActionLocks = {};
 const activeImageLoads = new Set();
-const APP_VERSION = '1.0.17';
-const APP_BUILD = '2026.11.13.2';
-const LATEST_APK_VERSION = '1.0.17';
+const APP_VERSION = '1.0.18';
+const APP_BUILD = '2026.11.13.3';
+const LATEST_APK_VERSION = '1.0.18';
 const LATEST_APK_URL = 'https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk';
+let activeApkDownloadState = null;
 try { if (typeof history !== 'undefined' && 'scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch (e) {}
 const FEED_REFRESH_MS = 5 * 60 * 1000;
 const FEED_PAGE_SIZE = 6;
@@ -3220,6 +3221,8 @@ function renderSettings() {
     let cookies = { auth_token: '', ct0: '', image_mode: 'tap' };
     let isLive = false;
     let versionInfo = { version: APP_VERSION, build: APP_BUILD, isLive: false };
+    let apkStatus = { downloading: false, canInstall: true, cachedVersion: null };
+    const supportsInAppApk = !!(window.AndroidBridge && typeof AndroidBridge.installApkUpdateAsync === 'function');
 
     if (window.AndroidBridge) {
         try { cookies = JSON.parse(AndroidBridge.getCookies()); } catch(e){}
@@ -3229,10 +3232,20 @@ function renderSettings() {
                 versionInfo = JSON.parse(AndroidBridge.getAppVersionInfo());
             }
         } catch(e){}
+        try {
+            if (AndroidBridge.getApkUpdateStatus) {
+                apkStatus = JSON.parse(AndroidBridge.getApkUpdateStatus());
+            }
+        } catch(e){}
     }
 
     let installedVersion = versionInfo.version || 'unknown';
     let hasNewApk = installedVersion !== 'unknown' && compareSemver(LATEST_APK_VERSION, installedVersion) > 0;
+    let isApkDownloading = !!apkStatus.downloading || !!(activeApkDownloadState && activeApkDownloadState.state === 'downloading');
+    let cachedReady = !!(hasNewApk && apkStatus.cachedVersion === LATEST_APK_VERSION);
+    let apkButtonLabel = cachedReady
+        ? 'Install Ready Update (v' + escapeHtml(LATEST_APK_VERSION) + ')'
+        : 'Download APK Update (v' + escapeHtml(LATEST_APK_VERSION) + ')';
 
     container.innerHTML = `
     <div class="card">
@@ -3256,26 +3269,31 @@ function renderSettings() {
     </div>
 
     <div class="card">
-        <div class="card-title">In-App Live Updates</div>
+        <div class="card-title">App Updates</div>
         <p class="card-desc">
-            Pull latest UI and script fixes over-the-air, or download a native APK update when Android bridge/media code changes.
+            Updates both web interface fixes (~150 KB) and full Android APK releases directly from this button.
         </p>
-        <button type="button" class="btn btn-secondary btn-block" onclick="triggerAppUpdate()" id="updateBtn">
-            Check for Updates
+        <button type="button" class="btn btn-secondary btn-block" onclick="triggerAppUpdate()" id="updateBtn" ${isApkDownloading ? 'disabled' : ''}>
+            ${isApkDownloading ? 'Downloading Update...' : 'Check &amp; Install Updates'}
         </button>
         <div id="updateStatusText" style="margin-top:10px; font-size:13px; color:var(--text-muted); text-align:center;">
-            Currently running ${isLive ? 'live OTA' : 'bundled'} web v${APP_VERSION}
+            ${isApkDownloading ? 'Downloading full update...' : 'Currently running ' + (isLive ? 'live OTA' : 'bundled') + ' web v' + APP_VERSION}
         </div>
+        <button type="button" class="btn btn-secondary btn-block" id="cancelApkUpdateBtn" onclick="cancelNativeApkUpdate()" style="margin-top:8px; font-size:13px; display:${isApkDownloading ? 'block' : 'none'};">
+            Cancel Download
+        </button>
         ${hasNewApk ? `
         <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border);">
             <div style="font-size:13px; color:var(--accent); font-weight:700; margin-bottom:6px;">
                 Native APK Update Available (v${escapeHtml(LATEST_APK_VERSION)})
             </div>
             <p class="card-desc" style="margin-bottom:10px;">
-                Installed APK is v${escapeHtml(installedVersion)}. Update the APK for native fixes (Like, Retweet, video poster frames, faster HD image loading).
+                ${supportsInAppApk
+                    ? 'Installed APK is v' + escapeHtml(installedVersion) + '. Tap below (or Check &amp; Install Updates) to install v' + escapeHtml(LATEST_APK_VERSION) + ' in-app.'
+                    : 'Installed APK is v' + escapeHtml(installedVersion) + '. Install v' + escapeHtml(LATEST_APK_VERSION) + ' once so future updates run completely in-app from this button.'}
             </p>
-            <button type="button" class="btn btn-block" onclick="downloadApkUpdate()">
-                Download APK Update (v${escapeHtml(LATEST_APK_VERSION)})
+            <button type="button" class="btn btn-block" id="apkUpdateBtn" onclick="downloadApkUpdate()" ${isApkDownloading ? 'disabled' : ''}>
+                ${apkButtonLabel}
             </button>
         </div>` : ''}
         ${isLive ? `
@@ -3353,11 +3371,110 @@ function compareSemver(a, b) {
     return 0;
 }
 
-function downloadApkUpdate() {
-    if (window.AndroidBridge && typeof AndroidBridge.openExternalUrl === 'function') {
-        if (AndroidBridge.openExternalUrl(LATEST_APK_URL)) return;
+function formatBytesMb(bytes) {
+    return (Math.max(0, Number(bytes) || 0) / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function resolveApkDownloadUrl(apkVersion, candidateUrl) {
+    if (candidateUrl && /^https:\/\/github\.com\/sovopr\/xlite-android\/releases\/download\/v[0-9]+\.[0-9]+\.[0-9]+\/xlite-fup-release\.apk$/.test(candidateUrl)) {
+        return candidateUrl;
     }
-    window.location.href = LATEST_APK_URL;
+    if (apkVersion && /^[0-9]+\.[0-9]+\.[0-9]+$/.test(apkVersion)) {
+        return 'https://github.com/sovopr/xlite-android/releases/download/v' + apkVersion + '/xlite-fup-release.apk';
+    }
+    return candidateUrl || LATEST_APK_URL;
+}
+
+window.__onApkUpdateEvent = function(rawJson) {
+    let evt = null;
+    try { evt = typeof rawJson === 'string' ? JSON.parse(rawJson) : rawJson; } catch (_) { return; }
+    if (!evt || !evt.state) return;
+
+    const statusText = document.getElementById('updateStatusText');
+    const updateBtn = document.getElementById('updateBtn');
+    const apkBtn = document.getElementById('apkUpdateBtn');
+    const cancelBtn = document.getElementById('cancelApkUpdateBtn');
+
+    if (evt.state === 'downloading') {
+        activeApkDownloadState = evt;
+        const pct = typeof evt.percent === 'number' && evt.percent >= 0 ? evt.percent + '% ' : '';
+        const sizeNote = evt.totalBytes > 0
+            ? '(' + formatBytesMb(evt.bytes) + ' / ' + formatBytesMb(evt.totalBytes) + ')'
+            : '(' + formatBytesMb(evt.bytes) + ')';
+        if (statusText) statusText.textContent = 'Downloading full update v' + (evt.version || '') + '... ' + pct + sizeNote;
+        if (updateBtn) { updateBtn.disabled = true; updateBtn.textContent = 'Downloading Update...'; }
+        if (apkBtn) apkBtn.disabled = true;
+        if (cancelBtn) cancelBtn.style.display = 'block';
+        return;
+    }
+
+    if (evt.state === 'verifying') {
+        if (statusText) statusText.textContent = 'Verifying package signature and integrity...';
+        if (cancelBtn) cancelBtn.style.display = 'none';
+        return;
+    }
+
+    activeApkDownloadState = null;
+    if (cancelBtn) cancelBtn.style.display = 'none';
+
+    if (evt.state === 'permission_required') {
+        if (statusText) statusText.textContent = evt.message || "Enable 'Allow from this source' in Android Settings, then return to X Lite.";
+        if (updateBtn) { updateBtn.disabled = false; updateBtn.textContent = 'Install Ready Update (v' + (evt.version || LATEST_APK_VERSION) + ')'; }
+        if (apkBtn) { apkBtn.disabled = false; apkBtn.textContent = 'Install Ready Update (v' + (evt.version || LATEST_APK_VERSION) + ')'; }
+        return;
+    }
+
+    if (evt.state === 'installing') {
+        if (statusText) statusText.textContent = 'Opening Android installer for v' + (evt.version || '') + ' — tap Install to finish.';
+        if (updateBtn) { updateBtn.disabled = false; updateBtn.textContent = 'Check & Install Updates'; }
+        if (apkBtn) { apkBtn.disabled = false; apkBtn.textContent = 'Install Ready Update (v' + (evt.version || LATEST_APK_VERSION) + ')'; }
+        return;
+    }
+
+    if (evt.state === 'cancelled' || evt.state === 'error') {
+        if (statusText) statusText.textContent = evt.message || 'Full app update failed. Please try again.';
+        if (updateBtn) { updateBtn.disabled = false; updateBtn.textContent = 'Check & Install Updates'; }
+        if (apkBtn) apkBtn.disabled = false;
+    }
+};
+
+function startNativeApkUpdate(apkVersion, apkUrl) {
+    const statusText = document.getElementById('updateStatusText');
+    const updateBtn = document.getElementById('updateBtn');
+    const apkBtn = document.getElementById('apkUpdateBtn');
+    const targetUrl = resolveApkDownloadUrl(apkVersion, apkUrl);
+    const targetVersion = apkVersion || LATEST_APK_VERSION;
+
+    if (window.AndroidBridge && typeof AndroidBridge.installApkUpdateAsync === 'function') {
+        if (statusText) statusText.textContent = 'Preparing full update v' + targetVersion + '...';
+        if (updateBtn) { updateBtn.disabled = true; updateBtn.textContent = 'Downloading Update...'; }
+        if (apkBtn) apkBtn.disabled = true;
+        const started = AndroidBridge.installApkUpdateAsync(targetUrl, targetVersion);
+        if (!started) {
+            if (statusText) statusText.textContent = 'Update download is already in progress or blocked.';
+            if (updateBtn) { updateBtn.disabled = false; updateBtn.textContent = 'Check & Install Updates'; }
+            if (apkBtn) apkBtn.disabled = false;
+        }
+        return started;
+    }
+    return false;
+}
+
+function cancelNativeApkUpdate() {
+    if (window.AndroidBridge && typeof AndroidBridge.cancelApkDownload === 'function') {
+        AndroidBridge.cancelApkDownload();
+    }
+}
+
+function downloadApkUpdate(targetVersion = LATEST_APK_VERSION, targetUrl = LATEST_APK_URL) {
+    if (window.AndroidBridge && typeof AndroidBridge.installApkUpdateAsync === 'function') {
+        if (startNativeApkUpdate(targetVersion, targetUrl)) return;
+    }
+    const resolved = targetUrl || resolveApkDownloadUrl(targetVersion, '');
+    if (window.AndroidBridge && typeof AndroidBridge.openExternalUrl === 'function') {
+        if (AndroidBridge.openExternalUrl(resolved)) return;
+    }
+    window.location.href = resolved;
 }
 
 // In-app hot updater
@@ -3401,48 +3518,65 @@ function triggerAppUpdate() {
 
 function applyUpdate(newHtml) {
     const statusText = document.getElementById('updateStatusText');
+    const updateBtn = document.getElementById('updateBtn');
     const versionMatch = newHtml.match(/const APP_VERSION = '([0-9]+\.[0-9]+\.[0-9]+)'/);
     if (!versionMatch) {
         if (statusText) statusText.textContent = 'Update file has no version information.';
-        const btn = document.getElementById('updateBtn');
-        if (btn) btn.disabled = false;
+        if (updateBtn) { updateBtn.disabled = false; updateBtn.textContent = 'Check & Install Updates'; }
         return;
     }
-    const newer = compareSemver(versionMatch[1], APP_VERSION) > 0;
-    if (!newer) {
-        let installedApk = 'unknown';
-        try {
-            if (window.AndroidBridge && AndroidBridge.getAppVersionInfo) {
-                installedApk = JSON.parse(AndroidBridge.getAppVersionInfo()).version || 'unknown';
+
+    const remoteWeb = versionMatch[1];
+    const apkMatch = newHtml.match(/const LATEST_APK_VERSION = '([0-9]+\.[0-9]+\.[0-9]+)'/);
+    const remoteApk = apkMatch ? apkMatch[1] : remoteWeb;
+    const urlMatch = newHtml.match(/const LATEST_APK_URL = '(https:\/\/[^']+)'/);
+    const remoteApkUrl = resolveApkDownloadUrl(remoteApk, urlMatch ? urlMatch[1] : '');
+
+    let installedApk = 'unknown';
+    try {
+        if (window.AndroidBridge && AndroidBridge.getAppVersionInfo) {
+            installedApk = JSON.parse(AndroidBridge.getAppVersionInfo()).version || 'unknown';
+        }
+    } catch(e) {}
+
+    const needsApk = installedApk !== 'unknown' && compareSemver(remoteApk, installedApk) > 0;
+    const needsWeb = compareSemver(remoteWeb, APP_VERSION) > 0;
+    const supportsInAppApk = !!(window.AndroidBridge && typeof AndroidBridge.installApkUpdateAsync === 'function');
+
+    if (needsApk && supportsInAppApk) {
+        if (needsWeb && AndroidBridge.saveLiveHtml) {
+            AndroidBridge.saveLiveHtml(newHtml);
+        }
+        startNativeApkUpdate(remoteApk, remoteApkUrl);
+        return;
+    }
+
+    if (needsWeb) {
+        if (window.AndroidBridge && AndroidBridge.saveLiveHtml) {
+            let ok = AndroidBridge.saveLiveHtml(newHtml);
+            if (ok) {
+                if (statusText) statusText.innerHTML = needsApk
+                    ? 'Web UI updated to v' + remoteWeb + '. Reloading to show APK update...'
+                    : 'Update installed. Reloading...';
+                setTimeout(() => {
+                    AndroidBridge.reloadApp();
+                }, 800);
+            } else {
+                if (statusText) statusText.innerHTML = 'Failed to save update.';
+                if (updateBtn) { updateBtn.disabled = false; updateBtn.textContent = 'Check & Install Updates'; }
             }
-        } catch(e) {}
-        const apkMatch = newHtml.match(/const LATEST_APK_VERSION = '([0-9]+\.[0-9]+\.[0-9]+)'/);
-        const remoteApk = apkMatch ? apkMatch[1] : LATEST_APK_VERSION;
-        const needsApk = installedApk !== 'unknown' && compareSemver(remoteApk, installedApk) > 0;
-        if (statusText) {
-            statusText.textContent = needsApk
-                ? 'Web interface is up to date (v' + APP_VERSION + '). Tap Download APK Update below for native fixes.'
-                : 'Already up to date (v' + APP_VERSION + ').';
+        } else {
+            alert("Please install the current APK once to enable in-app updates.");
         }
-        const btn = document.getElementById('updateBtn');
-        if (btn) btn.disabled = false;
         return;
     }
-    if (window.AndroidBridge && AndroidBridge.saveLiveHtml) {
-        let ok = AndroidBridge.saveLiveHtml(newHtml);
-        if (ok) {
-            if (statusText) statusText.innerHTML = 'Update installed. Reloading...';
-            setTimeout(() => {
-                AndroidBridge.reloadApp();
-            }, 800);
-        } else {
-            if (statusText) statusText.innerHTML = 'Failed to save update.';
-            const updateBtn = document.getElementById('updateBtn');
-            if (updateBtn) updateBtn.disabled = false;
-        }
-    } else {
-        alert("Please install the current APK once to enable in-app updates.");
+
+    if (statusText) {
+        statusText.textContent = needsApk
+            ? 'Web UI is up to date (v' + APP_VERSION + '). Install v' + remoteApk + ' APK below once to enable full self-updates.'
+            : 'Already up to date (v' + APP_VERSION + ').';
     }
+    if (updateBtn) { updateBtn.disabled = false; updateBtn.textContent = 'Check & Install Updates'; }
 }
 
 function resetToFactoryAsset() {

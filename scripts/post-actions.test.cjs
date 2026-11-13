@@ -309,5 +309,99 @@ function runExtendedActionTests() {
     extCtx.renderSettings();
     assert.doesNotMatch(mainContent.innerHTML, /Native APK Update Available/, 'Settings hides APK update prompt when current APK matches LATEST_APK_VERSION');
 
+    // Unified in-app full update (v1.0.18+ native APK + web UI from one Update button)
+    const updateStatusEl = { textContent: '', innerHTML: '' };
+    const updateBtnEl = { disabled: false, textContent: 'Check & Install Updates' };
+    const apkUpdateBtnEl = { disabled: false, textContent: 'Download APK Update' };
+    const cancelApkBtnEl = { style: { display: 'none' } };
+    const originalGetById = extCtx.document.getElementById;
+    extCtx.document.getElementById = id => {
+        if (id === 'updateStatusText') return updateStatusEl;
+        if (id === 'updateBtn') return updateBtnEl;
+        if (id === 'apkUpdateBtn') return apkUpdateBtnEl;
+        if (id === 'cancelApkUpdateBtn') return cancelApkBtnEl;
+        return originalGetById(id);
+    };
+
+    const apkInstalls = [];
+    const savedHtmls = [];
+    let reloadCount = 0;
+    extCtx.AndroidBridge.installApkUpdateAsync = (url, ver) => {
+        apkInstalls.push({ url, ver });
+        return true;
+    };
+    extCtx.AndroidBridge.saveLiveHtml = html => {
+        savedHtmls.push(html);
+        return true;
+    };
+    extCtx.AndroidBridge.reloadApp = () => { reloadCount++; };
+    extCtx.AndroidBridge.getApkUpdateStatus = () => JSON.stringify({
+        downloading: false,
+        canInstall: true,
+        cachedVersion: vm.runInContext('LATEST_APK_VERSION', extCtx)
+    });
+
+    mockInstalledApk = '1.0.17';
+    extCtx.renderSettings();
+    assert.match(mainContent.innerHTML, /Check &amp; Install Updates/);
+    assert.match(mainContent.innerHTML, /Install Ready Update/);
+
+    // Remote has BOTH newer web and newer APK -> saves live HTML quietly and launches in-app APK download immediately
+    mockInstalledApk = vm.runInContext('LATEST_APK_VERSION', extCtx);
+    const fullRemoteHtml = [
+        '<!DOCTYPE html><html><body><div id="mainContent"></div><script>',
+        "const APP_VERSION = '9.9.9';",
+        "const LATEST_APK_VERSION = '9.9.9';",
+        "const LATEST_APK_URL = 'https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk';",
+        '</script></body></html>'
+    ].join('\n');
+    extCtx.applyUpdate(fullRemoteHtml);
+    assert.equal(savedHtmls.length, 1, 'saves live HTML before native update without disrupting progress UI');
+    assert.equal(reloadCount, 0, 'does not reload WebView mid-APK download');
+    assert.equal(apkInstalls.length, 1, 'single Update flow starts native APK download automatically');
+    assert.equal(apkInstalls[0].url, 'https://github.com/sovopr/xlite-android/releases/download/v9.9.9/xlite-fup-release.apk');
+    assert.equal(apkInstalls[0].ver, '9.9.9');
+
+    // Progress, unknown-sources permission pause, installer launch, and error events drive UI cleanly
+    extCtx.__onApkUpdateEvent(JSON.stringify({
+        state: 'downloading',
+        version: '9.9.9',
+        bytes: 2 * 1024 * 1024,
+        totalBytes: 4 * 1024 * 1024,
+        percent: 50
+    }));
+    assert.match(updateStatusEl.textContent, /Downloading full update v9\.9\.9.*50%.*2\.0 MB \/ 4\.0 MB/);
+    assert.equal(updateBtnEl.disabled, true);
+    assert.equal(cancelApkBtnEl.style.display, 'block');
+
+    extCtx.__onApkUpdateEvent(JSON.stringify({
+        state: 'permission_required',
+        version: '9.9.9',
+        message: "Enable 'Allow from this source'"
+    }));
+    assert.equal(updateBtnEl.disabled, false);
+    assert.equal(updateBtnEl.textContent, 'Install Ready Update (v9.9.9)');
+    assert.equal(cancelApkBtnEl.style.display, 'none');
+
+    extCtx.__onApkUpdateEvent(JSON.stringify({ state: 'installing', version: '9.9.9' }));
+    assert.match(updateStatusEl.textContent, /Opening Android installer for v9\.9\.9/);
+    assert.equal(updateBtnEl.textContent, 'Check & Install Updates');
+
+    extCtx.__onApkUpdateEvent(JSON.stringify({ state: 'error', message: 'Transfer stalled' }));
+    assert.equal(updateStatusEl.textContent, 'Transfer stalled');
+    assert.equal(updateBtnEl.disabled, false);
+
+    // Web-only update (same APK version) applies OTA reload without APK download
+    apkInstalls.length = 0;
+    const webOnlyHtml = [
+        '<!DOCTYPE html><html><body><div id="mainContent"></div><script>',
+        "const APP_VERSION = '9.9.9';",
+        `const LATEST_APK_VERSION = '${vm.runInContext('LATEST_APK_VERSION', extCtx)}';`,
+        '</script></body></html>'
+    ].join('\n');
+    extCtx.applyUpdate(webOnlyHtml);
+    assert.equal(apkInstalls.length, 0, 'web-only update skips APK download');
+    assert.equal(savedHtmls.length, 2);
+
     console.log('Async post and reply tests passed.');
 }

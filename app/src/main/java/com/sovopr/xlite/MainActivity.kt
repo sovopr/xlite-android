@@ -24,6 +24,7 @@ import java.util.concurrent.TimeUnit
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
+    private lateinit var bridge: TwitterBridge
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
@@ -51,7 +52,7 @@ class MainActivity : AppCompatActivity() {
         settings.allowFileAccessFromFileURLs = false
         settings.allowUniversalAccessFromFileURLs = false
 
-        val bridge = TwitterBridge(this)
+        bridge = TwitterBridge(this)
         webView.addJavascriptInterface(bridge, "AndroidBridge")
 
         val imgCacheDir = File(cacheDir, "images")
@@ -132,6 +133,13 @@ class MainActivity : AppCompatActivity() {
         return 0
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (::bridge.isInitialized) {
+            bridge.resumePendingApkInstallIfPermitted()
+        }
+    }
+
     fun reloadAppUrl() {
         runOnUiThread {
             loadInitialHtml()
@@ -141,6 +149,12 @@ class MainActivity : AppCompatActivity() {
     fun dispatchJsCallback(callbackId: String) {
         runOnUiThread {
             webView.evaluateJavascript("window.__onAsyncFinish(${org.json.JSONObject.quote(callbackId)});", null)
+        }
+    }
+
+    fun dispatchApkUpdateEvent(payloadJson: String) {
+        runOnUiThread {
+            webView.evaluateJavascript("window.__onApkUpdateEvent && window.__onApkUpdateEvent(${org.json.JSONObject.quote(payloadJson)});", null)
         }
     }
 
