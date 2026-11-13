@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<link rel="preconnect" href="https://video.twimg.com" crossorigin>
 <title>𝕏 Lite</title>
 <style>
 :root {
@@ -658,28 +659,6 @@ body.rich-mode .tweet-avatar.mini {
 .quoted-box .media-grid-1 .tweet-img,
 .quoted-box .tweet-video {
   max-height: 280px;
-}
-.video-mute-btn {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.64);
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  z-index: 2;
-  padding: 0;
-}
-.video-mute-btn .icon-svg {
-  width: 15px;
-  height: 15px;
-  vertical-align: 0;
 }
 .gif-pill {
   position: absolute;
@@ -1973,9 +1952,9 @@ let isFetching = false;
 let pendingCallbacks = {};
 const pendingActionLocks = {};
 const activeImageLoads = new Set();
-const APP_VERSION = '1.0.28';
-const APP_BUILD = '2026.11.13.13';
-const LATEST_APK_VERSION = '1.0.28';
+const APP_VERSION = '1.0.29';
+const APP_BUILD = '2026.11.13.14';
+const LATEST_APK_VERSION = '1.0.29';
 const LATEST_APK_URL = 'https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk';
 const LATEST_APK_SHA256 = '';
 let activeApkDownloadState = null;
@@ -2287,8 +2266,6 @@ const UI_SVG_SPECS = {
     xLogo: { body: '<path d="M4 4l16 16M20 4L4 20"></path>' },
     package: { body: '<path d="M16.5 9.4l-9-5.19"></path><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line>' },
     dot: { filled: true, body: '<circle cx="12" cy="12" r="5"></circle>' },
-    volumeOn: { body: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>' },
-    volumeOff: { body: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line>' },
     arrowUp: { body: '<line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline>' },
     arrowDown: { body: '<line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline>' },
     communityNote: { body: '<circle cx="12" cy="12" r="9"></circle><line x1="12" y1="16" x2="12" y2="12"></line><circle cx="12" cy="8.5" r="0.8" fill="currentColor" stroke="none"></circle>' }
@@ -2318,6 +2295,10 @@ function getFeedPageSize() {
 
 function supportsRichModeNative() {
     return !window.AndroidBridge || typeof AndroidBridge.takeTempResult === 'function';
+}
+
+function supportsVideoProxyNative() {
+    return !!(window.AndroidBridge && typeof AndroidBridge.prefetchVideo === 'function');
 }
 
 function supportsSignedPostTimelines() {
@@ -2544,9 +2525,68 @@ function initSeenObserver(rootEl) {
     });
 }
 
+const prefetchedVideoUrls = new Set();
+
+function requestNativeVideoPrefetch(rawUrl) {
+    const clean = safeHttpsUrl(rawUrl, ['video.twimg.com']);
+    if (!clean || prefetchedVideoUrls.has(clean)) return false;
+    if (prefetchedVideoUrls.size > 160) prefetchedVideoUrls.clear();
+    prefetchedVideoUrls.add(clean);
+    if (window.AndroidBridge && typeof AndroidBridge.prefetchVideo === 'function') {
+        try { AndroidBridge.prefetchVideo(clean); } catch (_) {}
+    }
+    return true;
+}
+
+function prefetchUpcomingVideos(container, limit = 2) {
+    if (!container || appConfig.image_mode !== 'auto') return;
+    if (typeof container.querySelectorAll !== 'function') return;
+    const nodes = container.querySelectorAll('video.tweet-video[data-prefetch-url]');
+    let queued = 0;
+    for (let i = 0; i < nodes.length && queued < limit; i++) {
+        const rawUrl = nodes[i]?.dataset?.prefetchUrl;
+        if (rawUrl && requestNativeVideoPrefetch(rawUrl)) {
+            queued++;
+        }
+    }
+}
+
+function clearVideoStallTimer(vid) {
+    if (vid && vid.__xliteStallTimer) {
+        clearTimeout(vid.__xliteStallTimer);
+        vid.__xliteStallTimer = null;
+    }
+}
+
+/** Switches stalled video streams to a lighter bitrate when playback stalls over slow data. */
+function attachVideoBufferingMonitor(vid) {
+    if (!vid || vid.__xliteBufMonInit || typeof vid.addEventListener !== 'function') return;
+    vid.__xliteBufMonInit = true;
+    const scheduleStallDowngrade = () => {
+        if (vid.paused || vid.ended || !vid.dataset?.fallbackSrc) return;
+        if (vid.__xliteStallTimer) return;
+        vid.__xliteStallTimer = setTimeout(() => {
+            vid.__xliteStallTimer = null;
+            if (!vid.paused && !vid.ended && vid.readyState < 3 && vid.dataset?.fallbackSrc) {
+                fallbackVideoSource(vid, true);
+            }
+        }, 2200);
+    };
+    const clearStall = () => clearVideoStallTimer(vid);
+    vid.addEventListener('waiting', scheduleStallDowngrade);
+    vid.addEventListener('stalled', scheduleStallDowngrade);
+    vid.addEventListener('playing', clearStall);
+    vid.addEventListener('canplay', clearStall);
+    vid.addEventListener('pause', clearStall);
+    vid.addEventListener('ended', clearStall);
+}
+
 function pauseAllFeedVideos() {
     try {
-        document.querySelectorAll('video.tweet-video').forEach((v) => { try { v.pause(); } catch (_) {} });
+        document.querySelectorAll('video.tweet-video').forEach((v) => {
+            clearVideoStallTimer(v);
+            try { v.pause(); } catch (_) {}
+        });
     } catch (_) {}
 }
 
@@ -2559,32 +2599,58 @@ function initVideoAutoPauseObserver(rootEl) {
         try { videoPreloadObserver.disconnect(); } catch (_) {}
         videoPreloadObserver = null;
     }
-    if (typeof IntersectionObserver !== 'function') return;
     const container = rootEl || document.getElementById('mainContent');
-    if (!container) return;
-    const videos = container.querySelectorAll('video.tweet-video');
+    if (!container || typeof container.querySelectorAll !== 'function') return;
+    const videos = Array.from(container.querySelectorAll('video.tweet-video'));
     if (!videos.length) return;
-    // Only request metadata for near-viewport videos so off-screen MP4s do not congest startup fetches.
+    prefetchUpcomingVideos(container, 2);
+    videos.forEach(attachVideoBufferingMonitor);
+    if (typeof IntersectionObserver !== 'function') return;
+
+    let activeAutoPreloads = 0;
+    const MAX_AUTO_PRELOADS = 2;
+    // Prebuffer opening MP4 chunks ahead of viewport while capping concurrent MediaCodec decoders.
     videoPreloadObserver = new IntersectionObserver((entries) => {
         entries.forEach((entry) => {
             if (!entry.isIntersecting) return;
             const vid = entry.target;
-            if (vid.preload === 'none') vid.preload = 'metadata';
+            if (vid.dataset?.prefetchUrl) requestNativeVideoPrefetch(vid.dataset.prefetchUrl);
+            if (vid.preload === 'none') {
+                if (activeAutoPreloads < MAX_AUTO_PRELOADS) {
+                    vid.preload = 'auto';
+                    activeAutoPreloads++;
+                } else {
+                    vid.preload = 'metadata';
+                }
+            }
             try { videoPreloadObserver.unobserve(vid); } catch (_) {}
         });
-    }, { rootMargin: '240px 0px', threshold: [0.01] });
+    }, { rootMargin: '900px 0px', threshold: [0.01] });
+
     videoAutoPauseObserver = new IntersectionObserver((entries) => {
         entries.forEach((entry) => {
             const vid = entry.target;
             if (!entry.isIntersecting) {
+                clearVideoStallTimer(vid);
                 try { vid.pause(); } catch (_) {}
-            } else if (vid.dataset.autoplay === '1' && (vid.dataset.isGif === '1' || shouldAutoplayVideos())) {
-                pauseOtherVideos(vid);
-                if (vid.preload === 'none') vid.preload = 'metadata';
-                try { const p = vid.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {}
+            } else {
+                const idx = videos.indexOf(vid);
+                if (idx >= 0) {
+                    for (let next = idx + 1; next <= Math.min(videos.length - 1, idx + 2); next++) {
+                        const nxt = videos[next];
+                        if (nxt?.dataset?.prefetchUrl) requestNativeVideoPrefetch(nxt.dataset.prefetchUrl);
+                        if (next === idx + 1 && nxt && nxt.preload !== 'auto') nxt.preload = 'auto';
+                    }
+                }
+                if (vid.dataset.autoplay === '1' && (vid.dataset.isGif === '1' || shouldAutoplayVideos())) {
+                    pauseOtherVideos(vid);
+                    if (vid.preload !== 'auto') vid.preload = 'auto';
+                    try { const p = vid.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {}
+                }
             }
         });
     }, { threshold: [0.35] });
+
     videos.forEach((v) => {
         videoPreloadObserver.observe(v);
         videoAutoPauseObserver.observe(v);
@@ -3423,6 +3489,14 @@ function localImageUrl(url, mode, fresh = false) {
     return fresh ? base + '&retry=' + attempt : base;
 }
 
+function localVideoUrl(rawUrl) {
+    const clean = safeHttpsUrl(rawUrl, ['video.twimg.com']);
+    if (!clean) return '';
+    return supportsVideoProxyNative()
+        ? 'https://local.xlite/vid?url=' + encodeURIComponent(clean)
+        : clean;
+}
+
 function mediaHdUrl(url) {
     try {
         const parsed = new URL(url);
@@ -3838,17 +3912,29 @@ function pauseOtherVideos(activeVid) {
     if (typeof document.querySelectorAll !== 'function') return;
     document.querySelectorAll('video.tweet-video').forEach((v) => {
         if (v !== activeVid) {
+            clearVideoStallTimer(v);
             try { v.pause(); } catch (_) {}
         }
     });
 }
 
-function fallbackVideoSource(vid) {
-    const fallbackSrc = vid?.dataset?.fallbackSrc;
-    if (!fallbackSrc || vid.dataset.fallbackApplied === '1') return;
-    vid.dataset.fallbackApplied = '1';
+function fallbackVideoSource(vid, forcePlay = false) {
+    if (!vid || !vid.dataset) return;
+    const fallbackSrc = vid.dataset.fallbackSrc;
+    if (!fallbackSrc) return;
+    const nextFallback = vid.dataset.fallbackSd || '';
+    if (nextFallback) {
+        vid.dataset.fallbackSrc = nextFallback;
+        vid.dataset.fallbackSd = '';
+    } else {
+        if (vid.dataset.fallbackApplied === '1') return;
+        vid.dataset.fallbackApplied = '1';
+        vid.dataset.fallbackSrc = '';
+    }
+    clearVideoStallTimer(vid);
     const curTime = Number(vid.currentTime) || 0;
-    const wasPlaying = !vid.paused;
+    const wasPlaying = !vid.paused || !!forcePlay;
+    vid.preload = 'auto';
     vid.src = fallbackSrc;
     if (curTime > 0 || wasPlaying) {
         vid.addEventListener?.('loadedmetadata', () => {
@@ -3858,24 +3944,36 @@ function fallbackVideoSource(vid) {
     }
 }
 
-/** Toggles mute state for an inline tweet video and starts playback if unmuting a paused clip. */
-function toggleVideoMute(btn, videoId, event) {
-    if (event && event.stopPropagation) event.stopPropagation();
-    const vid = document.getElementById(videoId);
-    if (!vid) return;
-    vid.muted = !vid.muted;
-    if (!vid.muted) {
-        pauseOtherVideos(vid);
-        if (vid.paused) {
-            try { const p = vid.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {}
-        }
+function getConnectionProfileSafe() {
+    if (window.AndroidBridge && typeof AndroidBridge.getConnectionProfile === 'function') {
+        try { return String(AndroidBridge.getConnectionProfile() || 'unknown'); } catch (_) {}
     }
-    if (btn) {
-        btn.dataset.muted = vid.muted ? '1' : '0';
-        btn.setAttribute('aria-pressed', String(!vid.muted));
-        btn.setAttribute('aria-label', vid.muted ? 'Unmute video' : 'Mute video');
-        btn.innerHTML = uiSvg(vid.muted ? 'volumeOff' : 'volumeOn');
+    return 'unknown';
+}
+
+function chooseVideoStreams(m) {
+    const isGif = m?.type === 'animated_gif';
+    const fast = m?.video_url || '';
+    const balanced = m?.balanced_video_url || '';
+    const best = m?.hd_video_url || '';
+    if (isGif) {
+        return {
+            initialRaw: best || fast,
+            fallbackRaw: best && best !== fast ? fast : '',
+            sdRaw: ''
+        };
     }
+    const conn = getConnectionProfileSafe();
+    if (conn === 'wifi') {
+        const primary = best || balanced || fast;
+        const step2 = balanced && balanced !== primary ? balanced : (fast !== primary ? fast : '');
+        const step3 = step2 && fast && step2 !== fast && primary !== fast ? fast : '';
+        return { initialRaw: primary, fallbackRaw: step2, sdRaw: step3 };
+    }
+    // On cellular or unknown links, prefer crisp 720p (<= 2.6 Mbps) first so ultra-high 1080p60 MP4s do not stall.
+    const primary = balanced || best || fast;
+    const fallback = fast && fast !== primary ? fast : '';
+    return { initialRaw: primary, fallbackRaw: fallback, sdRaw: '' };
 }
 
 function renderMediaHtml(tw) {
@@ -3910,22 +4008,23 @@ function renderMediaHtml(tw) {
             const isGif = m.type === 'animated_gif';
             const durText = !isGif && m.duration_ms ? Math.ceil(m.duration_ms / 1000) + 's' : '';
             if (m.video_url) {
-                const hdAvailable = !isGif && m.hd_video_url && m.hd_video_url !== m.video_url;
-                const initialSrc = hdAvailable ? m.hd_video_url : m.video_url;
-                const fallbackAttr = hdAvailable ? ` data-fallback-src="${escapeHtml(m.video_url)}" onerror="fallbackVideoSource(this)"` : '';
+                const { initialRaw, fallbackRaw, sdRaw } = chooseVideoStreams(m);
+                const srcUrl = localVideoUrl(initialRaw);
+                const fallbackUrl = fallbackRaw ? localVideoUrl(fallbackRaw) : '';
+                const sdUrl = sdRaw ? localVideoUrl(sdRaw) : '';
+                const fallbackAttrs = fallbackUrl
+                    ? ` data-fallback-src="${escapeHtml(fallbackUrl)}"${sdUrl ? ` data-fallback-sd="${escapeHtml(sdUrl)}"` : ''} onerror="fallbackVideoSource(this)"`
+                    : '';
                 const autoplayEnabled = isGif || shouldAutoplayVideos();
                 const videoAttrs = isGif
                     ? 'autoplay loop muted playsinline data-autoplay="1" data-is-gif="1" preload="metadata"'
                     : (autoplayEnabled
                         ? 'controls muted loop playsinline data-autoplay="1" preload="none" onplay="pauseOtherVideos(this)"'
                         : 'controls playsinline preload="none" onplay="pauseOtherVideos(this)"');
-                const muteOverlay = (!isGif && autoplayEnabled)
-                    ? `<button type="button" class="video-mute-btn" data-muted="1" aria-pressed="false" aria-label="Unmute video" onclick="toggleVideoMute(this, '${vidId}', event)">${uiSvg('volumeOff')}</button>`
-                    : '';
                 out += `
                 <div class="video-wrap">
-                    <video id="${vidId}" class="tweet-video" ${videoAttrs} poster="${posterSrc}" src="${escapeHtml(initialSrc)}"${fallbackAttr}></video>
-                    ${isGif ? '<span class="gif-pill">GIF</span>' : muteOverlay}
+                    <video id="${vidId}" class="tweet-video" ${videoAttrs} poster="${posterSrc}" data-prefetch-url="${escapeHtml(initialRaw)}" src="${escapeHtml(srcUrl)}"${fallbackAttrs}></video>
+                    ${isGif ? '<span class="gif-pill">GIF</span>' : ''}
                 </div>`;
             } else {
                 const imgId = 'img_' + Math.random().toString(36).substr(2, 9);
@@ -4372,18 +4471,21 @@ function safeHttpsUrl(candidate, allowedHosts) {
 
 function selectMp4Variants(videoInfo) {
     const raw = videoInfo?.variants;
-    if (!Array.isArray(raw)) return { videoUrl: '', hdVideoUrl: '' };
+    if (!Array.isArray(raw)) return { videoUrl: '', balancedVideoUrl: '', hdVideoUrl: '' };
     const mp4s = raw
         .filter(v => v && v.content_type === 'video/mp4')
         .map(v => ({ url: safeHttpsUrl(v.url, ['video.twimg.com']), bitrate: Number(v.bitrate) || 0 }))
         .filter(v => !!v.url)
         .sort((a, b) => a.bitrate - b.bitrate);
-    if (!mp4s.length) return { videoUrl: '', hdVideoUrl: '' };
+    if (!mp4s.length) return { videoUrl: '', balancedVideoUrl: '', hdVideoUrl: '' };
     const standard = mp4s.filter(v => v.bitrate > 0 && v.bitrate <= 950000);
+    const mobileHd = mp4s.filter(v => v.bitrate > 0 && v.bitrate <= 2600000);
     const fast = standard.length ? standard[standard.length - 1] : mp4s[0];
     const best = mp4s[mp4s.length - 1];
+    const balanced = mobileHd.length ? mobileHd[mobileHd.length - 1] : best;
     return {
         videoUrl: fast.url,
+        balancedVideoUrl: balanced.url !== fast.url ? balanced.url : '',
         hdVideoUrl: best.url !== fast.url ? best.url : ''
     };
 }
@@ -4520,7 +4622,7 @@ function parseSingleTweet(tw) {
     extMedia.forEach(m => {
         let mUrl = m.media_url_https || m.media_url;
         if (mUrl) {
-            const { videoUrl, hdVideoUrl } = selectMp4Variants(m.video_info);
+            const { videoUrl, balancedVideoUrl, hdVideoUrl } = selectMp4Variants(m.video_info);
             const entry = {
                 url: mUrl,
                 type: m.type,
@@ -4528,6 +4630,7 @@ function parseSingleTweet(tw) {
                 alt_text: decodeHtmlEntities(m.ext_alt_text || m.alt_text || '')
             };
             if (videoUrl) entry.video_url = videoUrl;
+            if (balancedVideoUrl) entry.balanced_video_url = balancedVideoUrl;
             if (hdVideoUrl) entry.hd_video_url = hdVideoUrl;
             media.push(entry);
         }

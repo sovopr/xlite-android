@@ -27,6 +27,10 @@ object XLitePolicy {
     private val PROFILE_BANNER_SIZE_REGEX = Regex("/\\d+x\\d+$")
     private val PROFILE_IMAGE_SIZE_REGEX = Regex("_(mini|normal|bigger|200x200|400x400)(\\.[a-z0-9]+)$", RegexOption.IGNORE_CASE)
     private val SHA256_LINE_REGEX = Regex("^([0-9a-fA-F]{64})\\s+\\*?(.+)$")
+    private val BYTE_RANGE_REGEX = Regex("^bytes=(\\d+)-(\\d*)$", RegexOption.IGNORE_CASE)
+    private val CONTENT_RANGE_TOTAL_REGEX = Regex("^bytes\\s+\\d+-\\d+/(\\d+)$", RegexOption.IGNORE_CASE)
+
+    data class ByteRange(val start: Long, val end: Long?)
 
     private fun parseHttpsUrl(url: String): HttpUrl? {
         val trimmed = url.trim()
@@ -93,6 +97,30 @@ object XLitePolicy {
         val path = parsed.encodedPath
         return (host == "github.com" && (path.startsWith("/sovopr/xlite-android") || path.startsWith("/sovopr/xlite-releases"))) ||
             host == "x.com"
+    }
+
+    /** Validates X CDN video stream URLs permitted for native prebuffering and Range proxying. */
+    fun isAllowedVideoUrl(url: String): Boolean {
+        val parsed = parseHttpsUrl(url) ?: return false
+        return parsed.host.equals("video.twimg.com", ignoreCase = true) && parsed.encodedPath.length > 1
+    }
+
+    /** Parses an HTTP single-span byte range header ("bytes=start-" or "bytes=start-end"). */
+    fun parseByteRange(rangeHeader: String?): ByteRange? {
+        val trimmed = rangeHeader?.trim() ?: return null
+        val match = BYTE_RANGE_REGEX.matchEntire(trimmed) ?: return null
+        val start = match.groupValues[1].toLongOrNull() ?: return null
+        val endRaw = match.groupValues[2]
+        val end = if (endRaw.isEmpty()) null else (endRaw.toLongOrNull() ?: return null)
+        if (end != null && end < start) return null
+        return ByteRange(start, end)
+    }
+
+    /** Extracts total resource length from a standard "bytes start-end/total" response header. */
+    fun parseTotalLengthFromContentRange(header: String?): Long? {
+        val trimmed = header?.trim() ?: return null
+        val match = CONTENT_RANGE_TOTAL_REGEX.matchEntire(trimmed) ?: return null
+        return match.groupValues[1].toLongOrNull()?.takeIf { it > 0L }
     }
 
     fun isValidSemver(version: String): Boolean = SEMVER_REGEX.matches(version.trim())

@@ -205,6 +205,11 @@ class TwitterBridge(private val context: Context) {
     }
 
     @JavascriptInterface
+    fun prefetchVideo(url: String) {
+        VideoStreamProxy.get(context).prefetchHead(url)
+    }
+
+    @JavascriptInterface
     fun clearCache() {
         pendingTempResults.clear()
         jsonStoreDir.listFiles()?.forEach { file ->

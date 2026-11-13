@@ -100,7 +100,7 @@ vm.runInContext("appConfig.image_mode = 'auto'", context);
 const autoPreview = vm.runInContext(`renderTweetHtml(${JSON.stringify(parsed)})`, context);
 assert.match(autoPreview, /<video\b[^>]*controls muted loop playsinline/, 'automatic mode renders muted autoplay inline video player');
 assert.match(autoPreview, /preload="none"/, 'defers off-screen video metadata fetch until near viewport');
-assert.match(autoPreview, /class="video-mute-btn"/, 'renders compact SVG mute toggle button');
+assert.doesNotMatch(autoPreview, /video-mute-btn|toggleVideoMute/, 'omits duplicate top-right speaker overlay in favor of native player bar');
 assert.doesNotMatch(autoPreview, /video-meta-row|video-hd-btn|HD ✓/, 'video box renders plain without bottom metadata bar');
 assert.match(autoPreview, /poster="https:\/\/local\.xlite\/img\?url=https%3A%2F%2Fpbs\.twimg\.com%2Fext_tw_video_thumb%2Ftest\.jpg&mode=(?:rich|hd)"/, 'automatic mode requests full-resolution poster');
 assert.match(autoPreview, /src="https:\/\/video\.twimg\.com\/ext_tw_video\/test\/high\.mp4"/);
@@ -1151,6 +1151,100 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
     assert.equal(searchBtnEl.disabled, false);
     vm.runInContext(`executeSearch({ preventDefault() {} })`, ctx);
     assert.ok(searchBlurCalls >= 2, 'executeSearch blurs #searchInput immediately on submit');
+})();
+
+(() => {
+    // v1.0.29: single speaker UI (no overlay), adaptive mobile bitrate, local Range proxy routing, look-ahead prefetch & stall recovery
+    const prefetched = [];
+    const scheduledTimers = [];
+    let connProfile = 'cellular';
+    const vCtx = vm.createContext({
+        console, URL, encodeURIComponent, decodeURIComponent, Date, Math, JSON, Set, Map,
+        setTimeout: (fn, ms) => { const id = scheduledTimers.length + 1; scheduledTimers.push({ id, fn, ms, cleared: false }); return id; },
+        clearTimeout: (id) => { const t = scheduledTimers.find(x => x.id === id); if (t) t.cleared = true; },
+        localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+        history: { scrollRestoration: 'auto', state: null, replaceState() {}, pushState() {} },
+        window: { location: { hash: '', pathname: '/', search: '' }, addEventListener() {} },
+        document: { getElementById: () => null, querySelector: () => null, querySelectorAll: () => [], addEventListener() {} },
+        AndroidBridge: null
+    });
+    vCtx.window.document = vCtx.document;
+    vCtx.window.AndroidBridge = vCtx.AndroidBridge = {
+        getCookies: () => JSON.stringify({ auth_token: 'tok', ct0: 'csrf', image_mode: 'auto' }),
+        getCache: () => '',
+        saveCache: () => {},
+        getConnectionProfile: () => connProfile,
+        prefetchVideo: url => prefetched.push(url)
+    };
+    vm.runInContext(script, vCtx);
+    vm.runInContext("appConfig = { auth_token: 'tok', ct0: 'csrf', image_mode: 'auto', avatar_mode: 'mini', hide_ads: true, sync_seen: true };", vCtx);
+
+    const tierTweet = vCtx.parseSingleTweet({
+        rest_id: 'abr1',
+        legacy: {
+            full_text: 'Three bitrates video',
+            extended_entities: {
+                media: [{
+                    type: 'video',
+                    media_url_https: 'https://pbs.twimg.com/ext_tw_video_thumb/abr1/poster.jpg',
+                    video_info: {
+                        duration_millis: 12000,
+                        variants: [
+                            { content_type: 'video/mp4', bitrate: 832000, url: 'https://video.twimg.com/ext_tw_video/abr1/480.mp4' },
+                            { content_type: 'video/mp4', bitrate: 2176000, url: 'https://video.twimg.com/ext_tw_video/abr1/720.mp4' },
+                            { content_type: 'video/mp4', bitrate: 10368000, url: 'https://video.twimg.com/ext_tw_video/abr1/1080.mp4' }
+                        ]
+                    }
+                }]
+            }
+        }
+    });
+    assert.equal(tierTweet.media[0].video_url, 'https://video.twimg.com/ext_tw_video/abr1/480.mp4');
+    assert.equal(tierTweet.media[0].balanced_video_url, 'https://video.twimg.com/ext_tw_video/abr1/720.mp4');
+    assert.equal(tierTweet.media[0].hd_video_url, 'https://video.twimg.com/ext_tw_video/abr1/1080.mp4');
+
+    connProfile = 'cellular';
+    const cellularHtml = vCtx.renderTweetHtml(tierTweet);
+    assert.doesNotMatch(cellularHtml, /video-mute-btn|toggleVideoMute/, 'No duplicate top-right speaker overlay rendered');
+    assert.match(cellularHtml, /src="https:\/\/local\.xlite\/vid\?url=https%3A%2F%2Fvideo\.twimg\.com%2Fext_tw_video%2Fabr1%2F720\.mp4"/, 'Cellular selects crisp 720p stream through local Range proxy instead of 10 Mbps 1080p');
+    assert.match(cellularHtml, /data-prefetch-url="https:\/\/video\.twimg\.com\/ext_tw_video\/abr1\/720\.mp4"/);
+    assert.match(cellularHtml, /data-fallback-src="https:\/\/local\.xlite\/vid\?url=https%3A%2F%2Fvideo\.twimg\.com%2Fext_tw_video%2Fabr1%2F480\.mp4"/);
+
+    connProfile = 'wifi';
+    const wifiHtml = vCtx.renderTweetHtml(tierTweet);
+    assert.match(wifiHtml, /1080\.mp4/, 'Wi-Fi starts at top bitrate with two-step fallback');
+    assert.match(wifiHtml, /data-fallback-src="[^"]*720\.mp4"/);
+    assert.match(wifiHtml, /data-fallback-sd="[^"]*480\.mp4"/);
+
+    // Look-ahead prefetch queues unique URLs safely once per video
+    const vidNode1 = { dataset: { prefetchUrl: 'https://video.twimg.com/ext_tw_video/abr1/720.mp4' } };
+    const vidNode2 = { dataset: { prefetchUrl: 'https://video.twimg.com/ext_tw_video/abr2/720.mp4' } };
+    const vidNode3 = { dataset: { prefetchUrl: 'https://video.twimg.com/ext_tw_video/abr3/720.mp4' } };
+    vCtx.prefetchUpcomingVideos({ querySelectorAll: () => [vidNode1, vidNode1, vidNode2, vidNode3] }, 2);
+    assert.deepEqual(prefetched, [
+        'https://video.twimg.com/ext_tw_video/abr1/720.mp4',
+        'https://video.twimg.com/ext_tw_video/abr2/720.mp4'
+    ], 'prefetches first 2 upcoming videos without duplicating identical URLs');
+
+    // Continuous 'waiting' stall >= 2.2s automatically steps down to faster fallback bitrate preserving currentTime
+    const listeners = {};
+    const stalledVid = {
+        paused: false, ended: false, readyState: 1, currentTime: 4.5, preload: 'none',
+        src: 'https://local.xlite/vid?url=https%3A%2F%2Fvideo.twimg.com%2Fext_tw_video%2Fabr1%2F1080.mp4',
+        dataset: {
+            fallbackSrc: 'https://local.xlite/vid?url=https%3A%2F%2Fvideo.twimg.com%2Fext_tw_video%2Fabr1%2F720.mp4',
+            fallbackSd: 'https://local.xlite/vid?url=https%3A%2F%2Fvideo.twimg.com%2Fext_tw_video%2Fabr1%2F480.mp4'
+        },
+        addEventListener(ev, fn) { if (!listeners[ev]) listeners[ev] = []; listeners[ev].push(fn); }
+    };
+    vCtx.attachVideoBufferingMonitor(stalledVid);
+    listeners.waiting.forEach(fn => fn());
+    const stallTimer = scheduledTimers.find(t => t.ms === 2200 && !t.cleared);
+    assert.ok(stallTimer, 'schedules 2.2s stall watchdog timer on waiting');
+    stallTimer.fn();
+    assert.equal(stalledVid.src, 'https://local.xlite/vid?url=https%3A%2F%2Fvideo.twimg.com%2Fext_tw_video%2Fabr1%2F720.mp4', 'steps down from 1080p to 720p on continuous stall');
+    assert.equal(stalledVid.dataset.fallbackSrc, 'https://local.xlite/vid?url=https%3A%2F%2Fvideo.twimg.com%2Fext_tw_video%2Fabr1%2F480.mp4', 'retains 480p as next fallback stage');
+    assert.equal(stalledVid.preload, 'auto');
 })();
 
 (() => {
