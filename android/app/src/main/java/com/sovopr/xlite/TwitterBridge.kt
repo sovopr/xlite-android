@@ -205,6 +205,11 @@ class TwitterBridge(private val context: Context) {
     }
 
     @JavascriptInterface
+    fun getVideoProxyPort(): Int {
+        return VideoStreamProxy.get(context).getProxyPort()
+    }
+
+    @JavascriptInterface
     fun prefetchVideo(url: String) {
         VideoStreamProxy.get(context).prefetchHead(url)
     }

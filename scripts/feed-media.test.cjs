@@ -99,7 +99,7 @@ assert.doesNotMatch(textOnly, /<img|\.mp4/);
 vm.runInContext("appConfig.image_mode = 'auto'", context);
 const autoPreview = vm.runInContext(`renderTweetHtml(${JSON.stringify(parsed)})`, context);
 assert.match(autoPreview, /<video\b[^>]*controls muted loop playsinline/, 'automatic mode renders muted autoplay inline video player');
-assert.match(autoPreview, /preload="none"/, 'defers off-screen video metadata fetch until near viewport');
+assert.match(autoPreview, /preload="metadata"/, 'preloads video metadata and duration without fetching full stream');
 assert.doesNotMatch(autoPreview, /video-mute-btn|toggleVideoMute/, 'omits duplicate top-right speaker overlay in favor of native player bar');
 assert.doesNotMatch(autoPreview, /video-meta-row|video-hd-btn|HD ✓/, 'video box renders plain without bottom metadata bar');
 assert.match(autoPreview, /poster="https:\/\/local\.xlite\/img\?url=https%3A%2F%2Fpbs\.twimg\.com%2Fext_tw_video_thumb%2Ftest\.jpg&mode=(?:rich|hd)"/, 'automatic mode requests full-resolution poster');
@@ -779,7 +779,7 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
     // Disabling Video Autoplay disables muted autoplay attrs & mute button while keeping plain container
     vm.runInContext("appConfig.autoplay_videos = false;", rCtx);
     const manualVideoHtml = vm.runInContext(`renderTweetHtml(${JSON.stringify(hdMultiParsed)})`, rCtx);
-    assert.match(manualVideoHtml, /controls playsinline preload="none"/);
+    assert.match(manualVideoHtml, /controls playsinline preload="metadata"/);
     assert.doesNotMatch(manualVideoHtml, /data-autoplay="1"|video-mute-btn|video-meta-row/);
     vm.runInContext("appConfig.autoplay_videos = true;", rCtx);
 
@@ -1154,10 +1154,11 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
 })();
 
 (() => {
-    // v1.0.29: single speaker UI (no overlay), adaptive mobile bitrate, local Range proxy routing, look-ahead prefetch & stall recovery
+    // v1.0.31: single speaker UI, HTTP/1.1 loopback Range proxy (127.0.0.1), direct HTTPS fallback & OTA backward compat
     const prefetched = [];
     const scheduledTimers = [];
     let connProfile = 'cellular';
+    let proxyPort = 45123;
     const vCtx = vm.createContext({
         console, URL, encodeURIComponent, decodeURIComponent, Date, Math, JSON, Set, Map,
         setTimeout: (fn, ms) => { const id = scheduledTimers.length + 1; scheduledTimers.push({ id, fn, ms, cleared: false }); return id; },
@@ -1174,6 +1175,7 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
         getCache: () => '',
         saveCache: () => {},
         getConnectionProfile: () => connProfile,
+        getVideoProxyPort: () => proxyPort,
         prefetchVideo: url => prefetched.push(url)
     };
     vm.runInContext(script, vCtx);
@@ -1206,15 +1208,28 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
     connProfile = 'cellular';
     const cellularHtml = vCtx.renderTweetHtml(tierTweet);
     assert.doesNotMatch(cellularHtml, /video-mute-btn|toggleVideoMute/, 'No duplicate top-right speaker overlay rendered');
-    assert.match(cellularHtml, /src="https:\/\/local\.xlite\/vid\?url=https%3A%2F%2Fvideo\.twimg\.com%2Fext_tw_video%2Fabr1%2F720\.mp4"/, 'Cellular selects crisp 720p stream through local Range proxy instead of 10 Mbps 1080p');
+    assert.doesNotMatch(cellularHtml, /local\.xlite\/vid/, 'Never emits broken shouldInterceptRequest https://local.xlite/vid URLs');
+    assert.match(cellularHtml, /src="http:\/\/127\.0\.0\.1:45123\/vid\?url=https%3A%2F%2Fvideo\.twimg\.com%2Fext_tw_video%2Fabr1%2F720\.mp4"/, 'Cellular selects 720p stream via real loopback proxy instead of 10 Mbps 1080p');
     assert.match(cellularHtml, /data-prefetch-url="https:\/\/video\.twimg\.com\/ext_tw_video\/abr1\/720\.mp4"/);
-    assert.match(cellularHtml, /data-fallback-src="https:\/\/local\.xlite\/vid\?url=https%3A%2F%2Fvideo\.twimg\.com%2Fext_tw_video%2Fabr1%2F480\.mp4"/);
+    assert.match(cellularHtml, /data-fallback-src="http:\/\/127\.0\.0\.1:45123\/vid\?url=https%3A%2F%2Fvideo\.twimg\.com%2Fext_tw_video%2Fabr1%2F480\.mp4"/);
+    assert.match(cellularHtml, /data-fallback-sd="https:\/\/video\.twimg\.com\/ext_tw_video\/abr1\/480\.mp4"/, 'Retains direct HTTPS fallback escaping loopback proxy if needed');
 
     connProfile = 'wifi';
     const wifiHtml = vCtx.renderTweetHtml(tierTweet);
-    assert.match(wifiHtml, /1080\.mp4/, 'Wi-Fi starts at top bitrate with two-step fallback');
+    assert.match(wifiHtml, /http:\/\/127\.0\.0\.1:45123\/vid\?url=[^"]*1080\.mp4/, 'Wi-Fi starts at top bitrate through loopback proxy');
     assert.match(wifiHtml, /data-fallback-src="[^"]*720\.mp4"/);
     assert.match(wifiHtml, /data-fallback-sd="[^"]*480\.mp4"/);
+    assert.match(wifiHtml, /data-fallback-direct="https:\/\/video\.twimg\.com\/ext_tw_video\/abr1\/480\.mp4"/);
+
+    // OTA compatibility: older v1.0.29/v1.0.30 APKs lack getVideoProxyPort and receive direct HTTPS URLs (never broken local.xlite/vid)
+    proxyPort = 0;
+    const zeroPortUrl = vCtx.localVideoUrl('https://video.twimg.com/ext_tw_video/abr1/720.mp4');
+    assert.equal(zeroPortUrl, 'https://video.twimg.com/ext_tw_video/abr1/720.mp4', 'Port 0 falls back to direct HTTPS');
+    delete vCtx.AndroidBridge.getVideoProxyPort;
+    assert.equal(vCtx.supportsVideoProxyNative(), false);
+    assert.equal(vCtx.localVideoUrl('https://video.twimg.com/ext_tw_video/abr1/720.mp4'), 'https://video.twimg.com/ext_tw_video/abr1/720.mp4', 'Legacy APK without getVideoProxyPort uses direct HTTPS CDN');
+    vCtx.AndroidBridge.getVideoProxyPort = () => 45123;
+    proxyPort = 45123;
 
     // Look-ahead prefetch queues unique URLs safely once per video
     const vidNode1 = { dataset: { prefetchUrl: 'https://video.twimg.com/ext_tw_video/abr1/720.mp4' } };
@@ -1226,25 +1241,35 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
         'https://video.twimg.com/ext_tw_video/abr2/720.mp4'
     ], 'prefetches first 2 upcoming videos without duplicating identical URLs');
 
-    // Continuous 'waiting' stall >= 2.2s automatically steps down to faster fallback bitrate preserving currentTime
+    // Continuous 'waiting' stall >= 1.8s steps down through loopback -> SD -> direct HTTPS preserving currentTime and calling load()
     const listeners = {};
+    let loadCalls = 0;
     const stalledVid = {
-        paused: false, ended: false, readyState: 1, currentTime: 4.5, preload: 'none',
-        src: 'https://local.xlite/vid?url=https%3A%2F%2Fvideo.twimg.com%2Fext_tw_video%2Fabr1%2F1080.mp4',
+        paused: false, ended: false, readyState: 1, currentTime: 4.5, preload: 'metadata',
+        src: 'http://127.0.0.1:45123/vid?url=https%3A%2F%2Fvideo.twimg.com%2Fext_tw_video%2Fabr1%2F1080.mp4',
         dataset: {
-            fallbackSrc: 'https://local.xlite/vid?url=https%3A%2F%2Fvideo.twimg.com%2Fext_tw_video%2Fabr1%2F720.mp4',
-            fallbackSd: 'https://local.xlite/vid?url=https%3A%2F%2Fvideo.twimg.com%2Fext_tw_video%2Fabr1%2F480.mp4'
+            fallbackSrc: 'http://127.0.0.1:45123/vid?url=https%3A%2F%2Fvideo.twimg.com%2Fext_tw_video%2Fabr1%2F720.mp4',
+            fallbackSd: 'http://127.0.0.1:45123/vid?url=https%3A%2F%2Fvideo.twimg.com%2Fext_tw_video%2Fabr1%2F480.mp4',
+            fallbackDirect: 'https://video.twimg.com/ext_tw_video/abr1/480.mp4'
         },
+        load() { loadCalls++; },
         addEventListener(ev, fn) { if (!listeners[ev]) listeners[ev] = []; listeners[ev].push(fn); }
     };
     vCtx.attachVideoBufferingMonitor(stalledVid);
     listeners.waiting.forEach(fn => fn());
-    const stallTimer = scheduledTimers.find(t => t.ms === 2200 && !t.cleared);
-    assert.ok(stallTimer, 'schedules 2.2s stall watchdog timer on waiting');
+    const stallTimer = scheduledTimers.find(t => t.ms === 1800 && !t.cleared);
+    assert.ok(stallTimer, 'schedules 1.8s stall watchdog timer on waiting');
     stallTimer.fn();
-    assert.equal(stalledVid.src, 'https://local.xlite/vid?url=https%3A%2F%2Fvideo.twimg.com%2Fext_tw_video%2Fabr1%2F720.mp4', 'steps down from 1080p to 720p on continuous stall');
-    assert.equal(stalledVid.dataset.fallbackSrc, 'https://local.xlite/vid?url=https%3A%2F%2Fvideo.twimg.com%2Fext_tw_video%2Fabr1%2F480.mp4', 'retains 480p as next fallback stage');
+    assert.equal(loadCalls, 1, 'calls vid.load() to reset WebView media element on fallback');
+    assert.equal(stalledVid.src, 'http://127.0.0.1:45123/vid?url=https%3A%2F%2Fvideo.twimg.com%2Fext_tw_video%2Fabr1%2F720.mp4', 'steps down from 1080p to 720p on continuous stall');
+    assert.equal(stalledVid.dataset.fallbackSrc, 'http://127.0.0.1:45123/vid?url=https%3A%2F%2Fvideo.twimg.com%2Fext_tw_video%2Fabr1%2F480.mp4', 'retains 480p proxy as next fallback stage');
+    assert.equal(stalledVid.dataset.fallbackSd, 'https://video.twimg.com/ext_tw_video/abr1/480.mp4', 'promotes direct HTTPS fallback to tail');
     assert.equal(stalledVid.preload, 'auto');
+    vCtx.fallbackVideoSource(stalledVid);
+    assert.equal(stalledVid.src, 'http://127.0.0.1:45123/vid?url=https%3A%2F%2Fvideo.twimg.com%2Fext_tw_video%2Fabr1%2F480.mp4');
+    vCtx.fallbackVideoSource(stalledVid);
+    assert.equal(stalledVid.src, 'https://video.twimg.com/ext_tw_video/abr1/480.mp4', 'final fallback escapes proxy directly to video.twimg.com');
+    assert.equal(loadCalls, 3);
 })();
 
 (() => {

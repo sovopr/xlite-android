@@ -213,4 +213,45 @@ class XLiteUnitTest {
         assertEquals(3456789L, XLitePolicy.parseTotalLengthFromContentRange("bytes 0-786431/3456789"))
         assertNull(XLitePolicy.parseTotalLengthFromContentRange("bytes */*"))
     }
+
+    @Test
+    fun testLoopbackVideoRequestParsingAndRangeResolution() {
+        val validUrl = "https://video.twimg.com/ext_tw_video/123/pu/vid/720x1280/clip.mp4?tag=12"
+        val encoded = java.net.URLEncoder.encode(validUrl, "UTF-8")
+        val ok = XLitePolicy.parseLoopbackVideoRequest(
+            "GET /vid?url=$encoded HTTP/1.1",
+            mapOf("Host" to "127.0.0.1:41234", "range" to "bytes=0-65535")
+        )
+        assertTrue(ok is XLitePolicy.LoopbackParseResult.Ok)
+        val okReq = (ok as XLitePolicy.LoopbackParseResult.Ok).request
+        assertEquals("GET", okReq.method)
+        assertEquals(validUrl, okReq.targetUrl)
+        assertEquals("bytes=0-65535", okReq.rangeHeader)
+
+        val headOk = XLitePolicy.parseLoopbackVideoRequest("HEAD /vid?url=$encoded HTTP/1.1", emptyMap())
+        assertTrue(headOk is XLitePolicy.LoopbackParseResult.Ok)
+        assertEquals("HEAD", (headOk as XLitePolicy.LoopbackParseResult.Ok).request.method)
+
+        val badTarget = java.net.URLEncoder.encode("https://evil.example/video.mp4", "UTF-8")
+        val forbidden = XLitePolicy.parseLoopbackVideoRequest("GET /vid?url=$badTarget HTTP/1.1", emptyMap())
+        assertEquals(XLitePolicy.LoopbackParseResult.Error(403, "Forbidden"), forbidden)
+
+        val wrongPath = XLitePolicy.parseLoopbackVideoRequest("GET /other?url=$encoded HTTP/1.1", emptyMap())
+        assertEquals(XLitePolicy.LoopbackParseResult.Error(404, "Not Found"), wrongPath)
+
+        val postMethod = XLitePolicy.parseLoopbackVideoRequest("POST /vid?url=$encoded HTTP/1.1", emptyMap())
+        assertEquals(XLitePolicy.LoopbackParseResult.Error(405, "Method Not Allowed"), postMethod)
+
+        val full = XLitePolicy.resolveCachedByteRange(null, 2_000_000L)
+        assertEquals(XLitePolicy.RangeResolution.Full(0L, 1_999_999L, 2_000_000L), full)
+
+        val openRange = XLitePolicy.resolveCachedByteRange("bytes=0-", 2_000_000L)
+        assertEquals(XLitePolicy.RangeResolution.Partial(0L, 1_999_999L, 2_000_000L, 2_000_000L), openRange)
+
+        val clamped = XLitePolicy.resolveCachedByteRange("bytes=1500000-9999999", 2_000_000L)
+        assertEquals(XLitePolicy.RangeResolution.Partial(1_500_000L, 1_999_999L, 500_000L, 2_000_000L), clamped)
+
+        val unsatisfiable = XLitePolicy.resolveCachedByteRange("bytes=2000000-", 2_000_000L)
+        assertEquals(XLitePolicy.RangeResolution.Unsatisfiable(2_000_000L), unsatisfiable)
+    }
 }

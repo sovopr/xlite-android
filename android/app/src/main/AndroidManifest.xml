@@ -9,9 +9,11 @@
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher_blue"
         android:label="𝕏 Lite"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:roundIcon="@mipmap/ic_launcher_blue"
         android:supportsRtl="true"
-        android:theme="@style/Theme.XLite">
+        android:theme="@style/Theme.XLite"
+        android:usesCleartextTraffic="false">
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
