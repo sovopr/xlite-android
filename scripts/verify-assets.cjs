@@ -198,6 +198,7 @@ function checkRequiredRepoFilesAndLinks(version) {
         '.github/workflows/ci.yml',
         '.github/workflows/codeql.yml',
         '.github/workflows/build-apk.yml',
+        '.github/workflows/dependency-submission.yml',
     ];
     for (const rel of requiredFiles) {
         if (!fs.existsSync(path.join(ROOT, rel))) {

@@ -5,7 +5,15 @@ updates:
     schedule:
       interval: weekly
     groups:
-      gradle-dependencies:
+      gradle-plugin-dependencies:
+        patterns:
+          - "*"
+  - package-ecosystem: gradle
+    directory: /app
+    schedule:
+      interval: weekly
+    groups:
+      gradle-app-dependencies:
         patterns:
           - "*"
   - package-ecosystem: github-actions
