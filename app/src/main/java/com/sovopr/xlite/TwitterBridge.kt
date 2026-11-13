@@ -32,6 +32,8 @@ class TwitterBridge(private val context: Context) {
     companion object {
         const val BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
         const val USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+        private val ALLOWED_POST_PATH_REGEX = Regex("^/i/api/graphql/[A-Za-z0-9_-]+/(CreateTweet|FavoriteTweet|UnfavoriteTweet|CreateRetweet|DeleteRetweet|CreateBookmark|DeleteBookmark)$")
+        private val TRANSACTION_ID_REGEX = Regex("^[A-Za-z0-9+/]{80,120}$")
     }
 
     private fun buildRequest(url: String): Request {
@@ -182,9 +184,11 @@ class TwitterBridge(private val context: Context) {
         })
     }
 
-    private fun buildPostRequest(url: String, jsonPayload: String): Request? {
+    private fun buildPostRequest(url: String, jsonPayload: String, transactionId: String? = null): Request? {
         val parsedUrl = url.toHttpUrlOrNull()
-        if (parsedUrl?.isHttps != true || parsedUrl.host != "x.com" || !parsedUrl.encodedPath.endsWith("/CreateTweet")) {
+        if (parsedUrl?.isHttps != true || parsedUrl.host != "x.com" ||
+            !ALLOWED_POST_PATH_REGEX.matches(parsedUrl.encodedPath)
+        ) {
             return null
         }
         val authToken = prefs.getString("auth_token", "") ?: ""
@@ -194,7 +198,7 @@ class TwitterBridge(private val context: Context) {
         val mediaType = "application/json; charset=utf-8".toMediaType()
         val requestBody = jsonPayload.toRequestBody(mediaType)
 
-        return Request.Builder()
+        val builder = Request.Builder()
             .url(url)
             .post(requestBody)
             .addHeader("authorization", "Bearer $BEARER_TOKEN")
@@ -204,7 +208,27 @@ class TwitterBridge(private val context: Context) {
             .addHeader("content-type", "application/json")
             .addHeader("x-twitter-active-user", "yes")
             .addHeader("x-twitter-client-language", "en")
-            .build()
+            .addHeader("x-twitter-auth-type", "OAuth2Session")
+            .addHeader("referer", "https://x.com/home")
+        if (!transactionId.isNullOrBlank()) {
+            if (!TRANSACTION_ID_REGEX.matches(transactionId)) return null
+            builder.addHeader("x-client-transaction-id", transactionId)
+        }
+        return builder.build()
+    }
+
+    @JavascriptInterface
+    fun executePostWithTransactionAsync(url: String, jsonPayload: String, transactionId: String, callbackId: String) {
+        if (!TRANSACTION_ID_REGEX.matches(transactionId)) {
+            finishAsyncRequest(callbackId, errorPayload("Invalid request signature"))
+            return
+        }
+        val request = buildPostRequest(url, jsonPayload, transactionId)
+        if (request == null) {
+            finishAsyncRequest(callbackId, errorPayload("Unsupported post URL"))
+            return
+        }
+        runAsyncRequest(request, callbackId)
     }
 
     @JavascriptInterface

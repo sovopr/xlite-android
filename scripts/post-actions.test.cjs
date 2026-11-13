@@ -65,5 +65,224 @@ setTimeout(() => {
     context.executePostTweet(event);
     assert.equal(postButton.disabled, false, 'missing bridge cannot leave the button spinning');
     assert.match(alerts.pop(), /Native bridge unavailable/);
-    console.log('Async post and reply tests passed.');
+    runExtendedActionTests();
 }, 30);
+
+function makeElement(attrs = {}, initialText = '') {
+    const classes = new Set((attrs.class || '').split(/\s+/).filter(Boolean));
+    return {
+        textContent: initialText,
+        innerHTML: initialText,
+        focused: false,
+        scrolled: false,
+        scrollIntoView() { this.scrolled = true; },
+        focus() { this.focused = true; },
+        getAttribute(name) { return Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null; },
+        classList: {
+            toggle(cls, force) {
+                if (force === undefined) {
+                    if (classes.has(cls)) { classes.delete(cls); return false; }
+                    classes.add(cls); return true;
+                }
+                if (force) classes.add(cls); else classes.delete(cls);
+                return !!force;
+            },
+            contains(cls) { return classes.has(cls); }
+        }
+    };
+}
+
+function makeFakeDoc(actionNodes, extraById = {}) {
+    return {
+        getElementById(id) { return extraById[id] || null; },
+        querySelectorAll(selector) {
+            const m = selector.match(/^\[([a-z0-9-]+)\]$/i);
+            if (m) return actionNodes.filter(el => el.getAttribute(m[1]) !== null);
+            if (selector === '.tweet[data-id]') return actionNodes.filter(el => el.getAttribute('data-id') !== null);
+            return [];
+        }
+    };
+}
+
+function runExtendedActionTests() {
+    // 1. Offline tab Recent Cache hydration, Save/Unsave duplicate cards, malformed cache guard
+    const store = {
+        cache_bookmarks: 'null',
+        cache_feed_cache: JSON.stringify([
+            { id: '900', text: 'Cached post', user_name: 'A', user_screen_name: 'a', likes: 5, retweets: 2, replies: 1, liked: false, retweeted: false }
+        ])
+    };
+    const signedRequests = [];
+    const mainContent = { innerHTML: '' };
+    const statusBarEl = { textContent: '', innerHTML: '', style: {}, className: '' };
+    const likeElA = makeElement({ 'data-like-id': '900' }, '♡ 5');
+    const likeElB = makeElement({ 'data-like-id': '900' }, '♡ 5');
+    const rtEl = makeElement({ 'data-rt-id': '900' }, '⇄ 2');
+    const replyEl = makeElement({ 'data-reply-id': '900' }, '💬 1');
+    const bmElA = makeElement({ 'data-bm-id': '900' }, '☆ Save');
+    const bmElB = makeElement({ 'data-bm-id': '900' }, '☆ Save');
+    const tweetCard = makeElement({ 'data-id': '900' });
+    const replyInputEl = makeElement({});
+    const replyBtnEl = { disabled: false, innerHTML: 'Reply' };
+    const actionNodes = [tweetCard, likeElA, likeElB, rtEl, replyEl, bmElA, bmElB];
+    const savedFragment = {
+        firstChild: tweetCard,
+        querySelectorAll(selector) {
+            const m = selector.match(/^\[([a-z0-9-]+)\]$/i);
+            return m ? actionNodes.filter(el => el.getAttribute(m[1]) !== null) : [];
+        }
+    };
+
+    const extCtx = {
+        console, URL, setTimeout, clearTimeout,
+        window: null,
+        navigator: { onLine: false },
+        history: { state: null, pushState() {}, replaceState() {} },
+        scrollY: 120,
+        scrollTo() {},
+        alerts: [],
+        alert(msg) { this.alerts.push(msg); },
+        document: makeFakeDoc(actionNodes, {
+            mainContent,
+            statusBar: statusBarEl,
+            replyText: replyInputEl,
+            replyBtn: replyBtnEl,
+            tabNav: { style: {} }
+        }),
+        AndroidBridge: {
+            getCache(k) { return store['cache_' + k] || ''; },
+            saveCache(k, v) { store['cache_' + k] = String(v); },
+            executePostWithTransactionAsync(url, payload, tid, callbackId) {
+                signedRequests.push({ url, payload: JSON.parse(payload), tid, callbackId });
+            },
+            executeGetAsync() {}
+        }
+    };
+    extCtx.window = extCtx;
+    vm.createContext(extCtx);
+    vm.runInContext(script, extCtx);
+
+    // parseSingleTweet reads favorited, retweeted, bookmarked
+    const parsedTweet = extCtx.parseSingleTweet({
+        rest_id: '777',
+        core: { user_results: { result: { core: { name: 'U', screen_name: 'u' } } } },
+        legacy: {
+            id_str: '777',
+            full_text: 'Hello',
+            favorite_count: 10,
+            retweet_count: 3,
+            reply_count: 1,
+            favorited: true,
+            retweeted: true,
+            bookmarked: true
+        }
+    });
+    assert.equal(parsedTweet.liked, true);
+    assert.equal(parsedTweet.retweeted, true);
+    assert.equal(parsedTweet.bookmarked, true);
+
+    // Offline tab hydrates Recent Cache into allTweetsMap so Save works immediately
+    vm.runInContext("currentView = 'feed'; currentTab = 'cache';", extCtx);
+    extCtx.loadFeed('cache');
+    assert.equal(mainContent.innerHTML.includes('Recent Cache'), true);
+    assert.equal(mainContent.innerHTML.includes('data-bm-id="900"'), true);
+    assert.equal(mainContent.innerHTML.includes('onclick="toggleLike(\'900\', event)"'), true);
+    assert.equal(mainContent.innerHTML.includes('onclick="toggleRetweet(\'900\', event)"'), true);
+    assert.equal(mainContent.innerHTML.includes('onclick="commentTweet(\'900\', event)"'), true);
+
+    let stopped = false;
+    extCtx.toggleBookmark('900', { stopPropagation() { stopped = true; } });
+    assert.equal(stopped, true, 'Save stops event propagation');
+    assert.equal(bmElA.textContent, '★ Saved');
+    assert.equal(bmElB.textContent, '★ Saved', 'All matching Save buttons update');
+    assert.equal(JSON.parse(store.cache_bookmarks).length, 1);
+    assert.equal(mainContent.innerHTML.includes('Saved Tweets (1)'), true, 'Offline tab renders Saved Tweets immediately');
+    assert.equal(statusBarEl.textContent, 'Saved for offline reading', 'Offline re-render preserves save toast');
+
+    // Unsave refreshes Offline Saved section cleanly
+    extCtx.toggleBookmark('900');
+    assert.equal(JSON.parse(store.cache_bookmarks).length, 0);
+    assert.equal(mainContent.innerHTML.includes('Saved Tweets'), false);
+    assert.equal(statusBarEl.textContent, 'Removed from offline saved');
+
+    // Legacy bridge without executePostWithTransactionAsync blocks Like/Retweet clearly & reverts
+    delete extCtx.AndroidBridge.executePostWithTransactionAsync;
+    extCtx.toggleLike('900');
+    assert.equal(likeElA.textContent, '♡ 5', 'Like reverts when APK lacks signed POST bridge');
+    assert.match(statusBarEl.textContent, /Update to v1\.0\.16 APK/);
+
+    // Signed Like, Retweet, Bookmark & CreateTweet flow
+    extCtx.AndroidBridge.executePostWithTransactionAsync = (url, payload, tid, callbackId) => {
+        signedRequests.push({ url, payload: JSON.parse(payload), tid, callbackId });
+    };
+    extCtx.navigator.onLine = true;
+    vm.runInContext(`
+        savedFeedNodes = __frag;
+        searchTransactionClient = { generateTransactionId(method, p) { return 'A'.repeat(94); } };
+        searchTransactionFetchedAt = Date.now();
+    `, Object.assign(extCtx, { __frag: savedFragment }));
+
+    // Like + lock + revert on failure
+    extCtx.toggleLike('900');
+    assert.equal(likeElA.textContent, '♥ 6');
+    assert.equal(likeElB.textContent, '♥ 6', 'Detached/duplicate node stays in sync');
+    assert.equal(likeElA.classList.contains('liked'), true);
+    assert.equal(signedRequests.length, 1);
+    assert.match(signedRequests[0].url, /\/FavoriteTweet$/);
+    assert.equal(signedRequests[0].payload.variables.tweet_id, '900');
+    assert.equal(signedRequests[0].tid.length, 94);
+    extCtx.toggleLike('900');
+    assert.equal(signedRequests.length, 1, 'In-flight like prevents double submit');
+    extCtx.__onAsyncFinish(signedRequests.shift().callbackId, JSON.stringify({ data: { favorite_tweet: 'Done' } }));
+
+    // Unlike failure reverts state back cleanly
+    extCtx.toggleLike('900');
+    assert.equal(likeElA.textContent, '♡ 5');
+    assert.match(signedRequests[0].url, /\/UnfavoriteTweet$/);
+    extCtx.__onAsyncFinish(signedRequests.shift().callbackId, JSON.stringify({ error: true, message: 'Server 500' }));
+    assert.equal(likeElA.textContent, '♥ 6', 'Failed unlike reverts back to liked');
+    assert.match(statusBarEl.textContent, /Like failed: Server 500/);
+
+    // Retweet & Unretweet uses source_tweet_id
+    extCtx.toggleRetweet('900');
+    assert.equal(rtEl.textContent, '⇄ 3');
+    assert.equal(rtEl.classList.contains('retweeted'), true);
+    assert.match(signedRequests[0].url, /\/CreateRetweet$/);
+    assert.equal(signedRequests[0].payload.variables.tweet_id, '900');
+    extCtx.__onAsyncFinish(signedRequests.shift().callbackId, JSON.stringify({ data: { create_retweet: { retweet_results: { result: {} } } } }));
+
+    extCtx.toggleRetweet('900');
+    assert.equal(rtEl.textContent, '⇄ 2');
+    assert.match(signedRequests[0].url, /\/DeleteRetweet$/);
+    assert.equal(signedRequests[0].payload.variables.source_tweet_id, '900');
+    extCtx.__onAsyncFinish(signedRequests.shift().callbackId, JSON.stringify({ data: { unretweet: { source_tweet_results: {} } } }));
+
+    // Save when online triggers CreateBookmark too without blocking offline save
+    extCtx.toggleBookmark('900');
+    assert.equal(bmElA.textContent, '★ Saved');
+    assert.equal(signedRequests.length, 1);
+    assert.match(signedRequests[0].url, /\/CreateBookmark$/);
+    extCtx.__onAsyncFinish(signedRequests.shift().callbackId, JSON.stringify({ error: true, message: 'Offline' }));
+    assert.equal(extCtx.isBookmarked('900'), true, 'Failed remote bookmark sync never drops local save');
+
+    // commentTweet on active thread focuses reply box without reloading
+    vm.runInContext("currentView = 'thread'; activeThreadTweetId = '900';", extCtx);
+    extCtx.commentTweet('900', { stopPropagation() {} });
+    assert.equal(replyInputEl.focused, true, 'Tapping focal comment icon focuses reply box');
+
+    // Signed CreateTweet reply uses new queryId + falls back on 404 + updates reply count
+    replyInputEl.value = 'Nice post';
+    extCtx.postReply({ preventDefault() {} }, '900');
+    assert.equal(signedRequests.length, 1);
+    assert.match(signedRequests[0].url, /\/l4hk8uVGvR-a8kzQ4nOhPA\/CreateTweet$/);
+    assert.equal(signedRequests[0].payload.features.rweb_conversational_replies_downvote_enabled, false);
+    assert.equal(signedRequests[0].payload.features.responsive_web_made_on_x_label_enabled, false);
+    extCtx.__onAsyncFinish(signedRequests.shift().callbackId, JSON.stringify({ error: true, status: 404, message: 'HTTP 404 from X' }));
+    assert.equal(signedRequests.length, 1, '404 retries fallback CreateTweet queryId');
+    assert.match(signedRequests[0].url, /\/wR5Z_lEibLvkew3tF9w-Sg\/CreateTweet$/);
+    vm.runInContext("renderThreadView = () => {};", extCtx);
+    extCtx.__onAsyncFinish(signedRequests.shift().callbackId, JSON.stringify({ data: { create_tweet: { tweet_results: { result: {} } } } }));
+    assert.equal(replyEl.textContent, '💬 2', 'Successful reply increments parent reply count');
+
+    console.log('Async post and reply tests passed.');
+}

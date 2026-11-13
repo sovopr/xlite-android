@@ -84,6 +84,9 @@ a { color: var(--accent); text-decoration: none; }
 
 /* Subtle status bar */
 .status-bar {
+  position: sticky;
+  top: 52px;
+  z-index: 95;
   padding: 6px 14px;
   font-size: 13px;
   display: flex;
@@ -170,9 +173,28 @@ a { color: var(--accent); text-decoration: none; }
   align-items: center;
   gap: 4px;
   user-select: none;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: 6px;
 }
 .action-item:active {
   color: var(--accent);
+}
+.action-item.liked {
+  color: #f91880;
+  font-weight: 700;
+}
+.action-item.retweeted {
+  color: #00ba7c;
+  font-weight: 700;
+}
+.action-item.saved {
+  color: var(--accent);
+  font-weight: 700;
+}
+.action-item.busy {
+  opacity: 0.6;
+  pointer-events: none;
 }
 .retweet-banner {
   font-size: 13px;
@@ -1286,8 +1308,9 @@ let allTweetsMap = {};
 let bookmarksCache = null;
 let isFetching = false;
 let pendingCallbacks = {};
-const APP_VERSION = '1.0.15';
-const APP_BUILD = '2026.11.11.2';
+const pendingActionLocks = {};
+const APP_VERSION = '1.0.16';
+const APP_BUILD = '2026.11.13.1';
 const FEED_REFRESH_MS = 5 * 60 * 1000;
 const FEED_PAGE_SIZE = 6;
 let currentView = 'feed';
@@ -1295,6 +1318,7 @@ let viewGeneration = 0;
 let lastSearchQuery = '';
 let searchState = null;
 let threadOriginView = 'feed';
+let activeThreadTweetId = null;
 let savedSearchMarkup = '';
 let savedSearchScrollY = 0;
 let savedFeedMarkup = '';
@@ -1382,7 +1406,40 @@ const GRAPHQL_FEATURES = {
     responsive_web_grok_image_annotation_enabled: true,
     responsive_web_grok_imagine_annotation_enabled: true,
     responsive_web_grok_community_note_auto_translation_is_enabled: true,
+    rweb_conversational_replies_downvote_enabled: false,
+    responsive_web_made_on_x_label_enabled: false,
     responsive_web_enhance_cards_enabled: false
+};
+
+const POST_MUTATIONS = {
+    CreateTweet: {
+        queryIds: ['l4hk8uVGvR-a8kzQ4nOhPA', 'wR5Z_lEibLvkew3tF9w-Sg'],
+        includeFeatures: true
+    },
+    FavoriteTweet: {
+        queryIds: ['lI07N6Otwv1PhnEgXILM7A'],
+        ok: res => res?.data?.favorite_tweet === 'Done' || !!res?.errors?.some(e => e && e.code === 139)
+    },
+    UnfavoriteTweet: {
+        queryIds: ['ZYKSe-w7KEslx3JhSIk5LA'],
+        ok: res => res?.data?.unfavorite_tweet === 'Done'
+    },
+    CreateRetweet: {
+        queryIds: ['mbRO74GrOvSfRcJnlMapnQ'],
+        ok: res => !!res?.data?.create_retweet?.retweet_results?.result || !!res?.errors?.some(e => e && e.code === 327)
+    },
+    DeleteRetweet: {
+        queryIds: ['ZyZigVsNiFO6v1dEks1eWg'],
+        ok: res => !!res?.data?.unretweet?.source_tweet_results
+    },
+    CreateBookmark: {
+        queryIds: ['aoDbu3RHznuiSkQ9aNM67Q'],
+        ok: res => res?.data?.tweet_bookmark_put === 'Done'
+    },
+    DeleteBookmark: {
+        queryIds: ['Wlmlj2-xzyS1GN3a6cj-mQ'],
+        ok: res => res?.data?.tweet_bookmark_delete === 'Done'
+    }
 };
 
 function init() {
@@ -1486,6 +1543,83 @@ function performAsyncPost(url, payload, callback) {
     }
 }
 
+function performSignedPost(path, payload, callback) {
+    const url = 'https://x.com' + path;
+    if (window.AndroidBridge && typeof AndroidBridge.executePostWithTransactionAsync === 'function') {
+        prepareXTransaction((prepErr) => {
+            if (prepErr) {
+                callback(JSON.stringify({ error: true, message: prepErr }));
+                return;
+            }
+            let tid = '';
+            try {
+                tid = searchTransactionClient.generateTransactionId('POST', path);
+            } catch (e) {
+                callback(JSON.stringify({ error: true, message: 'Could not sign X request. Please try again.' }));
+                return;
+            }
+            const cbId = 'post_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
+            pendingCallbacks[cbId] = callback;
+            try {
+                AndroidBridge.executePostWithTransactionAsync(url, payload, tid, cbId);
+            } catch (err) {
+                delete pendingCallbacks[cbId];
+                callback(JSON.stringify({ error: true, message: err.message || 'Post failed' }));
+            }
+        });
+        return;
+    }
+    if (!path.endsWith('/CreateTweet') && window.AndroidBridge) {
+        callback(JSON.stringify({ error: true, message: 'Update to v1.0.16 APK from GitHub Releases to enable Like & Retweet.' }));
+        return;
+    }
+    performAsyncPost(url, payload, callback);
+}
+
+function parsePostResponse(resStr, op) {
+    let res;
+    try { res = JSON.parse(resStr); } catch (err) { res = { error: true, message: resStr || 'Empty response' }; }
+    const spec = POST_MUTATIONS[op];
+    if (op === 'CreateTweet') {
+        const errObj = Array.isArray(res?.errors) ? res.errors[0] : null;
+        const error = errObj?.message || (res?.error ? (res.message || 'Error') : (!res?.data?.create_tweet ? 'Unexpected response from X' : ''));
+        return { ok: !error, res, error, status: res?.status };
+    }
+    if (spec?.ok && spec.ok(res)) {
+        return { ok: true, res, error: '', status: res?.status || 200 };
+    }
+    const errObj = Array.isArray(res?.errors) ? res.errors[0] : null;
+    const error = errObj?.message || (res?.error ? (res.message || 'Error') : 'Unexpected response from X');
+    return { ok: false, res, error, status: res?.status };
+}
+
+function performPostMutation(op, variables, callback) {
+    const spec = POST_MUTATIONS[op];
+    if (!spec || !spec.queryIds?.length) {
+        callback({ ok: false, error: 'Unsupported action' });
+        return;
+    }
+    function tryIndex(index, lastFailure) {
+        if (index >= spec.queryIds.length) {
+            callback(lastFailure || { ok: false, error: 'Request failed' });
+            return;
+        }
+        const queryId = spec.queryIds[index];
+        const path = '/i/api/graphql/' + queryId + '/' + op;
+        const bodyObj = { variables, queryId };
+        if (spec.includeFeatures) bodyObj.features = GRAPHQL_FEATURES;
+        performSignedPost(path, JSON.stringify(bodyObj), (resStr) => {
+            const parsed = parsePostResponse(resStr, op);
+            if (!parsed.ok && index + 1 < spec.queryIds.length && isQueryIdFailure(parsed)) {
+                tryIndex(index + 1, parsed);
+                return;
+            }
+            callback(parsed);
+        });
+    }
+    tryIndex(0, null);
+}
+
 function showStatus(text, isError, autoHideMs) {
     const bar = document.getElementById('statusBar');
     if (!bar) return;
@@ -1514,6 +1648,7 @@ function nav(view) {
         savedFeedMarkup = '';
         savedFeedNodes = null;
     }
+    activeThreadTweetId = null;
     currentView = view;
     viewGeneration++;
     document.querySelectorAll('.bottom-item').forEach((el, idx) => {
@@ -1536,6 +1671,7 @@ function nav(view) {
 function switchFeed(tab) {
     savedFeedMarkup = '';
     savedFeedNodes = null;
+    activeThreadTweetId = null;
     currentView = 'feed';
     viewGeneration++;
     currentTab = tab;
@@ -1573,42 +1709,247 @@ function linkify(text) {
 }
 
 function getBookmarks() {
-    if (bookmarksCache) return bookmarksCache;
+    if (Array.isArray(bookmarksCache)) return bookmarksCache;
     try {
         let b = window.AndroidBridge ? AndroidBridge.getCache('bookmarks') : localStorage.getItem('bookmarks');
-        bookmarksCache = b ? JSON.parse(b) : [];
+        let parsed = b ? JSON.parse(b) : [];
+        bookmarksCache = Array.isArray(parsed) ? parsed : [];
         return bookmarksCache;
     } catch(e) { bookmarksCache = []; return bookmarksCache; }
 }
 
-function isBookmarked(id) {
-    return getBookmarks().some(t => t.id === id);
+function saveBookmarks(list) {
+    bookmarksCache = Array.isArray(list) ? list : [];
+    const s = JSON.stringify(bookmarksCache);
+    if (window.AndroidBridge && AndroidBridge.saveCache) AndroidBridge.saveCache('bookmarks', s);
+    else if (typeof localStorage !== 'undefined') localStorage.setItem('bookmarks', s);
 }
 
-function toggleBookmark(twId) {
-    let list = getBookmarks();
-    let idx = list.findIndex(t => t.id === twId);
-    let el = document.getElementById('bm-' + twId);
-    if (idx >= 0) {
-        list.splice(idx, 1);
-        if (el) el.innerHTML = '☆ Save';
-        showStatus('Removed from offline saved', false, 2000);
-    } else {
-        let tweetObj = allTweetsMap[twId] || currentTweetsList.find(t => t.id === twId);
-        if (tweetObj) {
-            list.unshift(tweetObj);
-            if (el) el.innerHTML = '★ Saved';
-            showStatus('Saved for offline reading', false, 2000);
+function isBookmarked(id) {
+    const key = String(id || '');
+    return getBookmarks().some(t => t && String(t.id) === key);
+}
+
+function findTweetById(twId) {
+    const key = String(twId || '');
+    if (!key) return null;
+    if (allTweetsMap[key]) return allTweetsMap[key];
+    let found = currentTweetsList.find(t => t && String(t.id) === key);
+    if (!found) found = getBookmarks().find(t => t && String(t.id) === key);
+    if (!found && window.AndroidBridge && AndroidBridge.getCache) {
+        try {
+            const raw = AndroidBridge.getCache('feed_cache');
+            const cached = raw ? JSON.parse(raw) : [];
+            if (Array.isArray(cached)) {
+                cached.forEach(t => { if (t && t.id && !allTweetsMap[t.id]) allTweetsMap[t.id] = t; });
+                found = allTweetsMap[key] || null;
+            }
+        } catch(e) {}
+    }
+    if (found) allTweetsMap[key] = found;
+    return found || null;
+}
+
+function readNodeAttr(el, name) {
+    if (!el) return null;
+    if (typeof el.getAttribute === 'function') return el.getAttribute(name);
+    if (name.startsWith('data-') && el.dataset) {
+        const camel = name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+        return el.dataset[camel] ?? null;
+    }
+    return null;
+}
+
+function setTweetActionElements(root, attr, twId, updateFn) {
+    if (!root || typeof root.querySelectorAll !== 'function') return;
+    root.querySelectorAll('[' + attr + ']').forEach(el => {
+        if (readNodeAttr(el, attr) === twId) updateFn(el);
+    });
+}
+
+function syncTweetActionDom(root, twId, tw) {
+    if (!root || typeof root.querySelectorAll !== 'function') return;
+    const saved = isBookmarked(twId);
+    const liked = !!tw?.liked;
+    const retweeted = !!tw?.retweeted;
+    setTweetActionElements(root, 'data-reply-id', twId, el => {
+        if (tw) el.textContent = '💬 ' + (tw.replies || 0);
+    });
+    setTweetActionElements(root, 'data-rt-id', twId, el => {
+        if (tw) el.textContent = '⇄ ' + (tw.retweets || 0);
+        if (el.classList) {
+            el.classList.toggle('retweeted', retweeted);
+            el.classList.toggle('busy', !!pendingActionLocks['rt:' + twId]);
+        }
+    });
+    setTweetActionElements(root, 'data-like-id', twId, el => {
+        if (tw) el.textContent = (liked ? '♥ ' : '♡ ') + (tw.likes || 0);
+        if (el.classList) {
+            el.classList.toggle('liked', liked);
+            el.classList.toggle('busy', !!pendingActionLocks['like:' + twId]);
+        }
+    });
+    setTweetActionElements(root, 'data-bm-id', twId, el => {
+        el.textContent = saved ? '★ Saved' : '☆ Save';
+        if (el.classList) el.classList.toggle('saved', saved);
+    });
+}
+
+function syncTweetActionState(twId) {
+    const key = String(twId || '');
+    const tw = findTweetById(key);
+    if (tw) {
+        allTweetsMap[key] = tw;
+        currentTweetsList.forEach(item => {
+            if (item && String(item.id) === key) Object.assign(item, tw);
+        });
+        const bmList = getBookmarks();
+        let bmChanged = false;
+        bmList.forEach(item => {
+            if (item && String(item.id) === key && item !== tw) {
+                Object.assign(item, tw);
+                bmChanged = true;
+            }
+        });
+        if (bmChanged) saveBookmarks(bmList);
+    }
+    syncTweetActionDom(document, key, tw);
+    if (typeof savedFeedNodes !== 'undefined' && savedFeedNodes) {
+        syncTweetActionDom(savedFeedNodes, key, tw);
+    }
+}
+
+function syncVisibleTweetActions() {
+    if (typeof document.querySelectorAll !== 'function') return;
+    const seen = new Set();
+    document.querySelectorAll('.tweet[data-id]').forEach(node => {
+        const id = readNodeAttr(node, 'data-id');
+        if (id && !seen.has(id)) {
+            seen.add(id);
+            syncTweetActionDom(document, id, findTweetById(id));
+        }
+    });
+}
+
+function toggleLike(twId, event) {
+    if (event && event.stopPropagation) event.stopPropagation();
+    const key = String(twId || '');
+    const tw = findTweetById(key);
+    if (!tw) return;
+    const lockKey = 'like:' + key;
+    if (pendingActionLocks[lockKey]) return;
+
+    const prevLiked = !!tw.liked;
+    const prevLikes = Number(tw.likes) || 0;
+    const targetLiked = !prevLiked;
+
+    pendingActionLocks[lockKey] = true;
+    tw.liked = targetLiked;
+    tw.likes = Math.max(0, prevLikes + (targetLiked ? 1 : -1));
+    syncTweetActionState(key);
+
+    const op = targetLiked ? 'FavoriteTweet' : 'UnfavoriteTweet';
+    performPostMutation(op, { tweet_id: key }, (res) => {
+        delete pendingActionLocks[lockKey];
+        if (!res.ok) {
+            tw.liked = prevLiked;
+            tw.likes = prevLikes;
+            syncTweetActionState(key);
+            showStatus('Like failed: ' + (res.error || 'Try again'), true, 4500);
+            return;
+        }
+        syncTweetActionState(key);
+    });
+}
+
+function toggleRetweet(twId, event) {
+    if (event && event.stopPropagation) event.stopPropagation();
+    const key = String(twId || '');
+    const tw = findTweetById(key);
+    if (!tw) return;
+    const lockKey = 'rt:' + key;
+    if (pendingActionLocks[lockKey]) return;
+
+    const prevRetweeted = !!tw.retweeted;
+    const prevRetweets = Number(tw.retweets) || 0;
+    const targetRetweeted = !prevRetweeted;
+
+    pendingActionLocks[lockKey] = true;
+    tw.retweeted = targetRetweeted;
+    tw.retweets = Math.max(0, prevRetweets + (targetRetweeted ? 1 : -1));
+    syncTweetActionState(key);
+
+    const op = targetRetweeted ? 'CreateRetweet' : 'DeleteRetweet';
+    const vars = targetRetweeted
+        ? { tweet_id: key, dark_request: false }
+        : { source_tweet_id: key, dark_request: false };
+
+    performPostMutation(op, vars, (res) => {
+        delete pendingActionLocks[lockKey];
+        if (!res.ok) {
+            tw.retweeted = prevRetweeted;
+            tw.retweets = prevRetweets;
+            syncTweetActionState(key);
+            showStatus('Retweet failed: ' + (res.error || 'Try again'), true, 4500);
+            return;
+        }
+        syncTweetActionState(key);
+    });
+}
+
+function commentTweet(twId, event) {
+    if (event && event.stopPropagation) event.stopPropagation();
+    const key = String(twId || '');
+    if (currentView === 'thread' && activeThreadTweetId === key) {
+        const replyInput = document.getElementById('replyText');
+        if (replyInput) {
+            if (typeof replyInput.scrollIntoView === 'function') replyInput.scrollIntoView({ block: 'center' });
+            if (typeof replyInput.focus === 'function') replyInput.focus();
+            return;
         }
     }
-    let s = JSON.stringify(list);
-    if (window.AndroidBridge) AndroidBridge.saveCache('bookmarks', s);
-    else localStorage.setItem('bookmarks', s);
+    viewThread(key, true);
 }
 
-function copyTweetLink(screenName, id) {
+function toggleBookmark(twId, event) {
+    if (event && event.stopPropagation) event.stopPropagation();
+    const key = String(twId || '');
+    let list = getBookmarks().slice();
+    let idx = list.findIndex(t => t && String(t.id) === key);
+    let tweetObj = findTweetById(key);
+    const willSave = idx < 0;
+
+    if (!willSave) {
+        list.splice(idx, 1);
+        if (tweetObj) tweetObj.bookmarked = false;
+        saveBookmarks(list);
+        showStatus('Removed from offline saved', false, 2000);
+    } else if (tweetObj) {
+        tweetObj.bookmarked = true;
+        list.unshift({ ...tweetObj });
+        saveBookmarks(list);
+        showStatus('Saved for offline reading', false, 2000);
+    } else {
+        showStatus('Could not save tweet offline', true, 3000);
+        return;
+    }
+
+    syncTweetActionState(key);
+    if (currentView === 'feed' && currentTab === 'cache') {
+        const prevY = typeof window.scrollY === 'number' ? window.scrollY : 0;
+        loadFeed('cache', false, true);
+        if (typeof window.scrollTo === 'function') window.scrollTo(0, prevY);
+    }
+    if (window.AndroidBridge && typeof AndroidBridge.executePostWithTransactionAsync === 'function' &&
+        (typeof navigator === 'undefined' || navigator.onLine !== false)) {
+        performPostMutation(willSave ? 'CreateBookmark' : 'DeleteBookmark', { tweet_id: key }, () => {});
+    }
+}
+
+function copyTweetLink(screenName, id, event) {
+    if (event && event.stopPropagation) event.stopPropagation();
     let url = 'https://x.com/' + (screenName || 'i') + '/status/' + id;
-    if (navigator.clipboard && navigator.clipboard.writeText) {
+    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(url).then(() => {
             showStatus('Link copied to clipboard', false, 2000);
         }).catch(() => {
@@ -1782,13 +2123,13 @@ function renderTweetHtml(tw) {
         ${quotedHtml}
         <div class="tweet-actions">
             <div class="tweet-actions-left">
-                <span class="action-item" onclick="viewThread('${escapeHtml(tw.id)}')">💬 ${tw.replies || 0}</span>
-                <span class="action-item">⇄ ${tw.retweets || 0}</span>
-                <span class="action-item">♡ ${tw.likes || 0}</span>
+                <span class="action-item" data-reply-id="${escapeHtml(tw.id)}" onclick="commentTweet('${escapeHtml(tw.id)}', event)">💬 ${tw.replies || 0}</span>
+                <span class="action-item${tw.retweeted ? ' retweeted' : ''}" data-rt-id="${escapeHtml(tw.id)}" onclick="toggleRetweet('${escapeHtml(tw.id)}', event)">⇄ ${tw.retweets || 0}</span>
+                <span class="action-item${tw.liked ? ' liked' : ''}" data-like-id="${escapeHtml(tw.id)}" onclick="toggleLike('${escapeHtml(tw.id)}', event)">${tw.liked ? '♥' : '♡'} ${tw.likes || 0}</span>
             </div>
             <div class="tweet-actions-right">
-                <span class="action-item" id="bm-${escapeHtml(tw.id)}" onclick="toggleBookmark('${escapeHtml(tw.id)}')">${bookmarked ? '★ Saved' : '☆ Save'}</span>
-                <span class="action-item" onclick="copyTweetLink('${escapeHtml(tw.user_screen_name)}', '${escapeHtml(tw.id)}')">🔗</span>
+                <span class="action-item${bookmarked ? ' saved' : ''}" data-bm-id="${escapeHtml(tw.id)}" onclick="toggleBookmark('${escapeHtml(tw.id)}', event)">${bookmarked ? '★ Saved' : '☆ Save'}</span>
+                <span class="action-item" onclick="copyTweetLink('${escapeHtml(tw.user_screen_name)}', '${escapeHtml(tw.id)}', event)">🔗</span>
             </div>
         </div>
     </div>`;
@@ -1964,6 +2305,9 @@ function parseSingleTweet(tw) {
         likes: legacy.favorite_count || tw.favorite_count || 0,
         retweets: legacy.retweet_count || tw.retweet_count || 0,
         replies: legacy.reply_count || tw.reply_count || 0,
+        liked: !!(legacy.favorited || tw.favorited),
+        retweeted: !!(legacy.retweeted || tw.retweeted),
+        bookmarked: !!(legacy.bookmarked || tw.bookmarked),
         media,
         quoted,
         is_retweet: isRetweet,
@@ -2003,15 +2347,21 @@ function refreshFeed() {
     }
 }
 
-function loadFeed(feedType, forceRefresh = false) {
+function loadFeed(feedType, forceRefresh = false, preserveStatus = false) {
     const container = document.getElementById('mainContent');
 
     if (feedType === 'cache') {
-        showStatus('Viewing offline tweets', false, 0);
+        if (!preserveStatus) showStatus('Viewing offline tweets', false, 0);
         let bookmarks = getBookmarks();
         let cached = window.AndroidBridge ? AndroidBridge.getCache('feed_cache') : '';
         let cachedList = [];
-        try { if (cached) cachedList = JSON.parse(cached); } catch(e){}
+        try {
+            const parsed = cached ? JSON.parse(cached) : [];
+            if (Array.isArray(parsed)) cachedList = parsed;
+        } catch(e){}
+
+        bookmarks.forEach(t => { if (t && t.id) allTweetsMap[t.id] = { ...(allTweetsMap[t.id] || {}), ...t }; });
+        cachedList.forEach(t => { if (t && t.id && !allTweetsMap[t.id]) allTweetsMap[t.id] = t; });
 
         if (bookmarks.length === 0 && cachedList.length === 0) {
             container.innerHTML = '<div class="card"><div class="card-title">No Offline Tweets</div><p class="card-desc">Tap ☆ Save on any tweet or browse feeds to save offline.</p></div>';
@@ -2021,11 +2371,11 @@ function loadFeed(feedType, forceRefresh = false) {
         let out = '';
         if (bookmarks.length > 0) {
             out += '<div style="padding:12px 16px; font-weight:700; font-size:14px; border-bottom:1px solid var(--border);">Saved Tweets (' + bookmarks.length + ')</div>';
-            out += bookmarks.map(renderTweetHtml).join('');
+            out += bookmarks.map(t => renderTweetHtml(allTweetsMap[t.id] || t)).join('');
         }
         if (cachedList.length > 0) {
             out += '<div style="padding:12px 16px; font-weight:700; font-size:14px; color:var(--text-muted); border-bottom:1px solid var(--border);">Recent Cache</div>';
-            out += cachedList.map(renderTweetHtml).join('');
+            out += cachedList.map(t => renderTweetHtml(allTweetsMap[t.id] || t)).join('');
         }
         container.innerHTML = '<div id="feedContainer">' + out + '</div>';
         return;
@@ -2233,7 +2583,7 @@ function loadMoreTweets(feedType) {
 }
 
 // Conversation / Thread View
-function viewThread(tweetId) {
+function viewThread(tweetId, focusReply = false) {
     if (currentView !== 'thread') {
         threadOriginView = currentView;
         if (currentView === 'feed') {
@@ -2263,15 +2613,16 @@ function viewThread(tweetId) {
     viewGeneration++;
     currentFeedOrigin = currentTab;
     history.pushState({ view: 'thread', id: tweetId, originTab: currentTab }, '', '#thread-' + tweetId);
-    renderThreadView(tweetId);
+    renderThreadView(tweetId, focusReply);
 }
 
-function renderThreadView(tweetId) {
+function renderThreadView(tweetId, focusReply = false) {
     const generation = viewGeneration;
+    activeThreadTweetId = String(tweetId || '');
     const tabNav = document.getElementById('tabNav');
     if (tabNav) tabNav.style.display = 'none';
 
-    let focal = allTweetsMap[tweetId] || currentTweetsList.find(t => t.id === tweetId);
+    let focal = findTweetById(tweetId);
 
     const container = document.getElementById('mainContent');
     container.innerHTML = `
@@ -2294,6 +2645,17 @@ function renderThreadView(tweetId) {
         </div>
     </div>`;
 
+    if (focusReply) {
+        setTimeout(() => {
+            if (generation !== viewGeneration || currentView !== 'thread') return;
+            const input = document.getElementById('replyText');
+            if (input) {
+                if (typeof input.scrollIntoView === 'function') input.scrollIntoView({ block: 'center' });
+                if (typeof input.focus === 'function') input.focus();
+            }
+        }, 50);
+    }
+
     let variables = {
         focalTweetId: tweetId,
         referrer: "tweet",
@@ -2306,13 +2668,13 @@ function renderThreadView(tweetId) {
         withVoice: true
     };
 
-    let url = `https://x.com/i/api/graphql/qpemjmVMoTWDvcRT43JIVQ/TweetDetail?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
+    let url = `https://x.com/i/api/graphql/dQDdKtt882nl-Km98FJGSQ/TweetDetail?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
 
     performAsyncGet(url, (resStr) => {
         if (generation !== viewGeneration || currentView !== 'thread') return;
         let parsed = parseTwitterGraphql(resStr);
         if (parsed.error && (!parsed.tweets || !parsed.tweets.length)) {
-            let fbUrl = `https://x.com/i/api/graphql/dQDdKtt882nl-Km98FJGSQ/TweetDetail?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
+            let fbUrl = `https://x.com/i/api/graphql/qpemjmVMoTWDvcRT43JIVQ/TweetDetail?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
             performAsyncGet(fbUrl, (fbStr) => {
                 if (generation !== viewGeneration || currentView !== 'thread') return;
                 let fbParsed = parseTwitterGraphql(fbStr);
@@ -2361,6 +2723,7 @@ function goBackToFeed() {
 }
 
 function restoreFeedView(targetTab, fromThread = false) {
+    activeThreadTweetId = null;
     currentView = 'feed';
     viewGeneration++;
     currentTab = targetTab || currentTab || 'following';
@@ -2372,7 +2735,7 @@ function restoreFeedView(targetTab, fromThread = false) {
     if (window.location.hash.startsWith('#thread-')) {
         try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch(e){}
     }
-    if (fromThread && savedFeedMarkup && savedFeedTab === currentTab && savedFeedMarkup.includes('id="feedContainer"')) {
+    if (fromThread && savedFeedMarkup && savedFeedTab === currentTab && savedFeedMarkup.includes('id="feedContainer"') && currentTab !== 'cache') {
         const scrollY = savedFeedScrollY;
         const container = document.getElementById('mainContent');
         if (savedFeedNodes && savedFeedNodes.firstChild) {
@@ -2381,6 +2744,7 @@ function restoreFeedView(targetTab, fromThread = false) {
         } else {
             container.innerHTML = savedFeedMarkup;
         }
+        syncVisibleTweetActions();
         if (savedFeedRequestInterrupted) {
             setFeedProgress(false, 'Loading interrupted. Tap Refresh to retry.');
             const loadMoreButton = document.querySelector('#loadMoreBox button');
@@ -2395,9 +2759,11 @@ function restoreFeedView(targetTab, fromThread = false) {
         window.scrollTo(0, scrollY);
         return;
     }
+    const cacheScrollY = fromThread && currentTab === 'cache' ? savedFeedScrollY : null;
     savedFeedMarkup = '';
     savedFeedNodes = null;
     loadFeed(currentTab);
+    if (cacheScrollY !== null) window.scrollTo(0, cacheScrollY);
 }
 
 // History stack back navigation
@@ -2407,9 +2773,11 @@ window.onpopstate = function(e) {
         viewGeneration++;
         renderThreadView(e.state.id);
     } else if (currentView === 'thread' && threadOriginView === 'search' && savedSearchMarkup) {
+        activeThreadTweetId = null;
         currentView = 'search';
         viewGeneration++;
         document.getElementById('mainContent').innerHTML = savedSearchMarkup;
+        syncVisibleTweetActions();
         document.getElementById('tabNav').style.display = 'none';
         document.querySelectorAll('.bottom-item').forEach((el, idx) => {
             el.classList.toggle('active', idx === 1);
@@ -2445,9 +2813,9 @@ function searchTag(tag) {
     }, 50);
 }
 
-function prepareSearchTransaction(done) {
-    if (!window.AndroidBridge || typeof AndroidBridge.executeSearchGetAsync !== 'function') {
-        done('Install the v1.0.6 APK to enable search.');
+function prepareXTransaction(done) {
+    if (!window.AndroidBridge) {
+        done('Native bridge unavailable');
         return;
     }
     if (searchTransactionClient && Date.now() - searchTransactionFetchedAt < 15 * 60 * 1000) {
@@ -2465,13 +2833,13 @@ function prepareSearchTransaction(done) {
     }
     performAsyncGet('https://x.com/home', (html) => {
         if (!html || !html.includes('twitter-site-verification')) {
-            finish('Could not prepare X search. Check your connection and account cookies.');
+            finish('Could not prepare X session. Check your connection and account cookies.');
             return;
         }
         const chunk = html.match(/,(\d+):"ondemand\.s"/);
         const hash = chunk && html.match(new RegExp(',' + chunk[1] + ':"([0-9a-f]+)"'));
         if (!hash) {
-            finish('X changed its search setup. Please check for an app update.');
+            finish('X changed its session setup. Please check for an app update.');
             return;
         }
         const scriptUrl = 'https://abs.twimg.com/responsive-web/client-web/ondemand.s.' + hash[1] + 'a.js';
@@ -2483,9 +2851,21 @@ function prepareSearchTransaction(done) {
                 searchTransactionFetchedAt = Date.now();
                 finish(null);
             } catch (e) {
-                finish('X changed its search setup. Please check for an app update.');
+                finish('X changed its session setup. Please check for an app update.');
             }
         });
+    });
+}
+
+function prepareSearchTransaction(done) {
+    if (!window.AndroidBridge || typeof AndroidBridge.executeSearchGetAsync !== 'function') {
+        done('Install the v1.0.6 APK to enable search.');
+        return;
+    }
+    prepareXTransaction((error) => {
+        if (error && error.includes('X session')) done('Could not prepare X search. Check your connection and account cookies.');
+        else if (error && error.includes('session setup')) done('X changed its search setup. Please check for an app update.');
+        else done(error);
     });
 }
 
@@ -2630,6 +3010,26 @@ function openSearchInX() {
     window.location.href = 'https://x.com/search?q=' + encodeURIComponent(lastSearchQuery);
 }
 
+function buildTweetVariables(text, replyToId) {
+    const variables = {
+        tweet_text: text,
+        dark_request: false,
+        media: {
+            media_entities: [],
+            possibly_sensitive: false
+        },
+        semantic_annotation_ids: [],
+        disallowed_reply_options: null
+    };
+    if (replyToId) {
+        variables.reply = {
+            in_reply_to_tweet_id: String(replyToId),
+            exclude_reply_user_ids: []
+        };
+    }
+    return variables;
+}
+
 function postReply(e, replyToId) {
     e.preventDefault();
     const input = document.getElementById('replyText');
@@ -2643,34 +3043,18 @@ function postReply(e, replyToId) {
         btn.innerHTML = 'Posting...';
     }
 
-    let payload = JSON.stringify({
-        variables: {
-            tweet_text: text,
-            reply: {
-                in_reply_to_tweet_id: replyToId,
-                exclude_reply_user_ids: []
-            },
-            dark_request: false,
-            media: {
-                media_entities: [],
-                possibly_sensitive: false
-            },
-            semantic_annotation_ids: []
-        },
-        features: GRAPHQL_FEATURES,
-        queryId: "wR5Z_lEibLvkew3tF9w-Sg"
-    });
-
-    performAsyncPost("https://x.com/i/api/graphql/wR5Z_lEibLvkew3tF9w-Sg/CreateTweet", payload, resStr => {
-        let res;
-        try { res = JSON.parse(resStr); } catch(err) { res = { error: true, message: resStr || 'Empty response' }; }
-        const error = res.errors?.[0]?.message || (res.error ? res.message || 'Error' : '');
+    performPostMutation('CreateTweet', buildTweetVariables(text, replyToId), ({ ok, error }) => {
         const stillInThread = submitGeneration === viewGeneration && currentView === 'thread';
-        if (error) {
-            if (stillInThread) alert('Reply failed: ' + error);
-            else showStatus('Reply failed: ' + error, true, 5000);
+        if (!ok || error) {
+            if (stillInThread) alert('Reply failed: ' + (error || 'Error'));
+            else showStatus('Reply failed: ' + (error || 'Error'), true, 5000);
             if (btn) { btn.disabled = false; btn.innerHTML = 'Reply'; }
             return;
+        }
+        const parentTweet = findTweetById(replyToId);
+        if (parentTweet) {
+            parentTweet.replies = (Number(parentTweet.replies) || 0) + 1;
+            syncTweetActionState(replyToId);
         }
         showStatus('Reply posted', false, 2500);
         if (stillInThread) {
@@ -2726,28 +3110,11 @@ function executePostTweet(e) {
         btn.innerHTML = 'Posting...';
     }
 
-    let payload = JSON.stringify({
-        variables: {
-            tweet_text: text,
-            dark_request: false,
-            media: {
-                media_entities: [],
-                possibly_sensitive: false
-            },
-            semantic_annotation_ids: []
-        },
-        features: GRAPHQL_FEATURES,
-        queryId: "wR5Z_lEibLvkew3tF9w-Sg"
-    });
-
-    performAsyncPost("https://x.com/i/api/graphql/wR5Z_lEibLvkew3tF9w-Sg/CreateTweet", payload, resStr => {
-        let res;
-        try { res = JSON.parse(resStr); } catch(err) { res = { error: true, message: resStr || 'Empty response' }; }
-        const error = res.errors?.[0]?.message || (res.error ? res.message || 'Error' : '');
+    performPostMutation('CreateTweet', buildTweetVariables(text), ({ ok, error }) => {
         const stillComposing = submitGeneration === viewGeneration && currentView === 'post';
-        if (error) {
-            if (stillComposing) alert('Post failed: ' + error);
-            else showStatus('Post failed: ' + error, true, 5000);
+        if (!ok || error) {
+            if (stillComposing) alert('Post failed: ' + (error || 'Error'));
+            else showStatus('Post failed: ' + (error || 'Error'), true, 5000);
             if (btn) { btn.disabled = false; btn.innerHTML = 'Post'; }
             return;
         }
