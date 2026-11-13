@@ -195,16 +195,19 @@ object XLitePolicy {
             return when (mode) {
                 "hd" -> listOf(
                     withQuery("webp", "large"),
+                    withQuery(baseFormat, "large"),
                     withQuery("webp", "medium"),
                     withQuery(baseFormat, "medium"),
                     withQuery("webp", "small"),
                     withQuery(baseFormat, "small")
                 ).distinct()
                 "rich" -> listOf(
-                    withQuery("webp", "small"),
-                    withQuery(baseFormat, "small"),
+                    withQuery("webp", "large"),
                     withQuery("webp", "medium"),
-                    withQuery(baseFormat, "medium")
+                    withQuery(baseFormat, "large"),
+                    withQuery(baseFormat, "medium"),
+                    withQuery("webp", "small"),
+                    withQuery(baseFormat, "small")
                 ).distinct()
                 else -> listOf(
                     withQuery("webp", "thumb"),
@@ -216,6 +219,8 @@ object XLitePolicy {
         if (cleanPath.startsWith("/profile_banners/")) {
             return if (PROFILE_BANNER_SIZE_REGEX.containsMatchIn(cleanPath)) {
                 listOf(rawUrl)
+            } else if (mode == "rich" || mode == "hd") {
+                listOf("$origin$cleanPath/1500x500", "$origin$cleanPath/600x200", "$origin$cleanPath").distinct()
             } else {
                 listOf("$origin$cleanPath/600x200", "$origin$cleanPath").distinct()
             }
@@ -226,13 +231,8 @@ object XLitePolicy {
             cleanPath.startsWith("/tweet_video_thumb/")
         if (isVideoThumb) {
             return when (mode) {
-                "hd" -> listOf(
+                "hd", "rich" -> listOf(
                     "$origin$cleanPath:large",
-                    "$origin$cleanPath:medium",
-                    "$origin$cleanPath:small",
-                    "$origin$cleanPath"
-                ).distinct()
-                "rich" -> listOf(
                     "$origin$cleanPath:medium",
                     "$origin$cleanPath:small",
                     "$origin$cleanPath"

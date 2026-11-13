@@ -146,6 +146,16 @@ a { color: var(--accent); text-decoration: none; }
   height: 18px;
   font-size: 10px;
 }
+body.rich-mode .tweet-avatar {
+  width: 38px;
+  height: 38px;
+  font-size: 15px;
+}
+body.rich-mode .tweet-avatar.mini {
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
+}
 .tweet-avatar-img {
   position: absolute;
   inset: 0;
@@ -493,9 +503,19 @@ a { color: var(--accent); text-decoration: none; }
 .tweet-video {
   display: block;
   width: 100%;
-  max-height: 440px;
+  max-height: 520px;
   background: #000;
   object-fit: contain;
+}
+.quoted-box .media-grid,
+.quoted-box .video-wrap,
+.quoted-box .link-card,
+.quoted-box .poll-box {
+  margin-top: 6px;
+}
+.quoted-box .media-grid-1 .tweet-img,
+.quoted-box .tweet-video {
+  max-height: 280px;
 }
 .video-meta-row {
   display: flex;
@@ -1612,9 +1632,9 @@ let isFetching = false;
 let pendingCallbacks = {};
 const pendingActionLocks = {};
 const activeImageLoads = new Set();
-const APP_VERSION = '1.0.24';
-const APP_BUILD = '2026.11.13.9';
-const LATEST_APK_VERSION = '1.0.24';
+const APP_VERSION = '1.0.25';
+const APP_BUILD = '2026.11.13.10';
+const LATEST_APK_VERSION = '1.0.25';
 const LATEST_APK_URL = 'https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk';
 const LATEST_APK_SHA256 = '';
 let activeApkDownloadState = null;
@@ -2094,6 +2114,14 @@ function initVideoAutoPauseObserver(rootEl) {
     videos.forEach((v) => videoAutoPauseObserver.observe(v));
 }
 
+function syncRichBodyClass() {
+    try {
+        if (typeof document !== 'undefined' && document.body && document.body.classList) {
+            document.body.classList.toggle('rich-mode', appConfig.image_mode === 'auto');
+        }
+    } catch (_) {}
+}
+
 function init() {
     if (window.AndroidBridge) {
         try {
@@ -2105,6 +2133,7 @@ function init() {
     appConfig.avatar_mode = readSavedAvatarMode();
     appConfig.hide_ads = readSavedHideAds();
     appConfig.sync_seen = readSavedSyncSeen();
+    syncRichBodyClass();
     loadViewerIdentity();
     loadSeenForYouIds();
     updateHeaderActions();
@@ -2897,6 +2926,15 @@ function mediaPreviewUrl(url, isVideo) {
     } catch (_) { return url; }
 }
 
+function mediaPosterUrl(url) {
+    try {
+        const parsed = new URL(url);
+        if (parsed.protocol !== 'https:' || parsed.hostname !== 'pbs.twimg.com') return url;
+        parsed.pathname = parsed.pathname.replace(/:(thumb|small|medium|large|orig)$/, '');
+        return parsed.href;
+    } catch (_) { return url; }
+}
+
 function avatarVariantUrl(url, mode = 'mini') {
     if (!url || mode === 'off') return '';
     try {
@@ -2904,7 +2942,9 @@ function avatarVariantUrl(url, mode = 'mini') {
         if (parsed.protocol !== 'https:' || parsed.hostname !== 'pbs.twimg.com') return '';
         if (!parsed.pathname.startsWith('/profile_images/')) return '';
         if (/\.gif$/i.test(parsed.pathname)) return '';
-        const suffix = mode === 'normal' ? '_normal' : '_mini';
+        const suffix = mode === 'hd' ? '_200x200'
+            : (mode === 'bigger' ? '_bigger'
+            : (mode === 'normal' ? '_normal' : '_mini'));
         parsed.pathname = parsed.pathname.replace(/_(mini|normal|bigger|200x200|400x400)(\.[a-z0-9]+)$/i, suffix + '$2');
         return parsed.href;
     } catch (_) { return ''; }
@@ -2919,12 +2959,18 @@ function getEffectiveAvatarMode() {
 function renderAvatarHtml(tw, sizeClass = '') {
     const label = String(tw.user_name || tw.user_screen_name || 'X').trim();
     const initial = escapeHtml((label[0] || 'X').toUpperCase());
-    const srcUrl = avatarVariantUrl(tw.user_avatar, getEffectiveAvatarMode());
+    const effective = getEffectiveAvatarMode();
+    const isRich = appConfig.image_mode === 'auto';
+    const variant = effective === 'off'
+        ? 'off'
+        : (isRich ? (effective === 'normal' ? 'bigger' : 'normal') : effective);
+    const proxyMode = isRich ? (supportsRichModeNative() ? 'rich' : 'hd') : 'thumb';
+    const srcUrl = avatarVariantUrl(tw.user_avatar, variant);
     const clickAttr = (!sizeClass && tw.user_screen_name)
         ? ` onclick="openProfile('${escapeHtml(tw.user_screen_name)}'); event.stopPropagation();"`
         : '';
     const imgTag = srcUrl
-        ? `<img class="tweet-avatar-img" src="${localImageUrl(srcUrl, 'thumb')}" alt="" loading="lazy" decoding="async" onload="this.style.opacity='1'" onerror="this.remove()" />`
+        ? `<img class="tweet-avatar-img" src="${localImageUrl(srcUrl, proxyMode)}" alt="" loading="lazy" decoding="async" onload="this.style.opacity='1'" onerror="this.remove()" />`
         : '';
     return `<span class="tweet-avatar${sizeClass ? ' ' + sizeClass : ''}"${clickAttr}><span>${initial}</span>${imgTag}</span>`;
 }
@@ -3010,22 +3056,48 @@ if (typeof document !== 'undefined' && document.addEventListener) {
     });
 }
 
+function pauseOtherVideos(activeVid) {
+    if (typeof document.querySelectorAll !== 'function') return;
+    document.querySelectorAll('video.tweet-video').forEach((v) => {
+        if (v !== activeVid) {
+            try { v.pause(); } catch (_) {}
+        }
+    });
+}
+
+function fallbackVideoSource(vid) {
+    const fallbackSrc = vid?.dataset?.fallbackSrc;
+    if (!fallbackSrc || vid.dataset.fallbackApplied === '1') return;
+    vid.dataset.fallbackApplied = '1';
+    const curTime = Number(vid.currentTime) || 0;
+    const wasPlaying = !vid.paused;
+    vid.src = fallbackSrc;
+    if (curTime > 0 || wasPlaying) {
+        vid.addEventListener?.('loadedmetadata', () => {
+            try { if (curTime > 0) vid.currentTime = curTime; } catch (_) {}
+            if (wasPlaying) { try { const p = vid.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {} }
+        }, { once: true });
+    }
+}
+
 function switchVideoHd(btn, videoId, event) {
     if (event && event.stopPropagation) event.stopPropagation();
     const vid = document.getElementById(videoId);
-    const hdSrc = btn?.dataset?.hdSrc;
-    if (!vid || !hdSrc) return;
+    const curQuality = btn?.dataset?.quality || 'sd';
+    const nextQuality = curQuality === 'hd' ? 'sd' : 'hd';
+    const targetSrc = nextQuality === 'hd' ? btn?.dataset?.hdSrc : btn?.dataset?.sdSrc;
+    if (!vid || !targetSrc) return;
     const curTime = vid.currentTime || 0;
     const wasPaused = vid.paused;
-    vid.src = hdSrc;
+    vid.src = targetSrc;
     const onReady = () => {
         try { if (curTime > 0) vid.currentTime = curTime; } catch (_) {}
         if (!wasPaused) { try { const p = vid.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {} }
     };
     if (typeof vid.addEventListener === 'function') vid.addEventListener('loadedmetadata', onReady, { once: true });
-    btn.textContent = 'HD ✓';
-    btn.classList.add('active');
-    btn.disabled = true;
+    btn.dataset.quality = nextQuality;
+    btn.textContent = nextQuality === 'hd' ? 'HD ✓' : 'HD';
+    btn.classList.toggle('active', nextQuality === 'hd');
 }
 
 function renderMediaHtml(tw) {
@@ -3056,21 +3128,24 @@ function renderMediaHtml(tw) {
         }
         videos.forEach(m => {
             const vidId = 'vid_' + Math.random().toString(36).substr(2, 9);
-            const posterSrc = localImageUrl(mediaPreviewUrl(m.url, true), 'thumb');
+            const posterSrc = localImageUrl(mediaPosterUrl(m.url), supportsRichModeNative() ? 'rich' : 'hd');
             const isGif = m.type === 'animated_gif';
             const durText = !isGif && m.duration_ms ? Math.ceil(m.duration_ms / 1000) + 's' : '';
             if (m.video_url) {
-                const hdBtn = !isGif && m.hd_video_url && m.hd_video_url !== m.video_url
-                    ? `<button type="button" class="video-hd-btn" data-hd-src="${escapeHtml(m.hd_video_url)}" onclick="switchVideoHd(this, '${vidId}', event)">HD</button>`
+                const hdAvailable = !isGif && m.hd_video_url && m.hd_video_url !== m.video_url;
+                const initialSrc = hdAvailable ? m.hd_video_url : m.video_url;
+                const fallbackAttr = hdAvailable ? ` data-fallback-src="${escapeHtml(m.video_url)}" onerror="fallbackVideoSource(this)"` : '';
+                const hdBtn = hdAvailable
+                    ? `<button type="button" class="video-hd-btn active" data-hd-src="${escapeHtml(m.hd_video_url)}" data-sd-src="${escapeHtml(m.video_url)}" data-quality="hd" onclick="switchVideoHd(this, '${vidId}', event)">HD ✓</button>`
                     : '';
                 out += `
                 <div class="video-wrap">
-                    <video id="${vidId}" class="tweet-video" ${isGif ? 'autoplay loop muted playsinline data-autoplay="1"' : 'controls playsinline'} preload="metadata" poster="${posterSrc}" src="${escapeHtml(m.video_url)}"></video>
+                    <video id="${vidId}" class="tweet-video" ${isGif ? 'autoplay loop muted playsinline data-autoplay="1"' : 'controls playsinline onplay="pauseOtherVideos(this)"'} preload="metadata" poster="${posterSrc}" src="${escapeHtml(initialSrc)}"${fallbackAttr}></video>
                     ${isGif ? '<span class="gif-pill">GIF</span>' : `<div class="video-meta-row"><span>Video${durText ? ' · ' + durText : ''}</span>${hdBtn}</div>`}
                 </div>`;
             } else {
                 const imgId = 'img_' + Math.random().toString(36).substr(2, 9);
-                const previewUrl = mediaPreviewUrl(m.url, true);
+                const previewUrl = mediaPosterUrl(m.url);
                 out += `
                 <div>
                     <div style="font-size:12px; color:var(--text-muted); margin-top:6px;">${isGif ? 'GIF' : 'Video'}${durText ? ' · ' + durText : ''} · poster frame</div>
@@ -3150,6 +3225,9 @@ function renderTweetHtml(tw) {
     if (tw.quoted) {
         let q = tw.quoted;
         const qBadge = q.user_verified ? '<span class="verified-badge" title="Verified">&#10003;</span>' : '';
+        const qMedia = appConfig.image_mode === 'auto' ? renderMediaHtml(q) : '';
+        const qPoll = appConfig.image_mode === 'auto' ? renderPollHtml(q.poll) : '';
+        const qCard = appConfig.image_mode === 'auto' && !qMedia && !qPoll ? renderCardHtml(q.card_preview) : '';
         quotedHtml = `
         <div class="quoted-box" onclick="viewThread('${escapeHtml(q.id)}'); event.stopPropagation();">
             <div class="tweet-header" style="margin-bottom:4px;">
@@ -3160,6 +3238,9 @@ function renderTweetHtml(tw) {
                 </div>
             </div>
             <div class="tweet-body" style="font-size:14px; margin-top:2px;">${linkify(q.text)}</div>
+            ${qMedia}
+            ${qPoll}
+            ${qCard}
         </div>`;
     }
 
@@ -3234,17 +3315,31 @@ function findInstructions(obj) {
     return null;
 }
 
-function isPromotedItem(item, entryId, container) {
+function isPromotedItem(item, entryId, container, twRes) {
     const injectionType = String(
         container?.clientEventInfo?.details?.timelinesDetails?.injectionType ||
         item?.clientEventInfo?.details?.timelinesDetails?.injectionType ||
         ''
     );
+    const component = String(
+        container?.clientEventInfo?.component ||
+        item?.clientEventInfo?.component ||
+        ''
+    );
     return !!(
         item?.promotedMetadata ||
+        item?.promoted_metadata ||
         item?.adMetadataContainer ||
-        (entryId && String(entryId).startsWith('promoted-')) ||
-        /promoted$/i.test(injectionType)
+        container?.promotedMetadata ||
+        container?.promoted_metadata ||
+        container?.adMetadataContainer ||
+        twRes?.promotedMetadata ||
+        twRes?.adMetadataContainer ||
+        item?.tweetDisplayType === 'Promoted' ||
+        item?.socialContext?.contextType === 'Promoted' ||
+        (entryId && /promoted/i.test(String(entryId))) ||
+        /promoted/i.test(injectionType) ||
+        /promoted/i.test(component)
     );
 }
 
@@ -3252,7 +3347,7 @@ function collectTimelineTweet(tweets, item, res, entryId, container) {
     if (!res) return;
     let parsed = parseSingleTweet(res);
     if (!parsed) return;
-    if (isPromotedItem(item, entryId, container)) {
+    if (isPromotedItem(item, entryId, container, res)) {
         parsed.is_ad = true;
         if (shouldHideAds()) return;
     }
@@ -3279,8 +3374,15 @@ function parseTwitterGraphql(jsonStr) {
     if (Array.isArray(data.statuses)) {
         let tweets = [];
         data.statuses.forEach(st => {
+            if (!st) return;
+            const isAd = !!(st.promoted || st.promoted_content || st.metadata?.promoted);
             let p = parseSingleTweet(st);
-            if (p) tweets.push(p);
+            if (!p) return;
+            if (isAd) {
+                p.is_ad = true;
+                if (shouldHideAds()) return;
+            }
+            tweets.push(p);
         });
         return { tweets, nextCursor: null };
     }
@@ -3291,10 +3393,17 @@ function parseTwitterGraphql(jsonStr) {
         let users = data.globalObjects.users || {};
         for (let tid in data.globalObjects.tweets) {
             let tw = data.globalObjects.tweets[tid];
+            if (!tw) continue;
+            const isAd = !!(tw.promoted || tw.promoted_content || tw.metadata?.promoted);
             let user = users[tw.user_id_str] || {};
             tw.user = user;
             let p = parseSingleTweet(tw);
-            if (p) tweets.push(p);
+            if (!p) continue;
+            if (isAd) {
+                p.is_ad = true;
+                if (shouldHideAds()) continue;
+            }
+            tweets.push(p);
         }
         return { tweets, nextCursor: null };
     }
@@ -3465,7 +3574,31 @@ function parseSingleTweet(tw) {
     }
 
     let text = decodeHtmlEntities(tw.note_tweet?.note_tweet_results?.result?.text || legacy.full_text || tw.full_text || tw.text || '');
-    text = text.replace(/https?:\/\/t\.co\/\S+$/, '').trim();
+
+    // Quoted tweet (parsed early so redundant quote permalinks can be stripped cleanly)
+    let quoted = null;
+    let qRes = tw.quoted_status_result?.result;
+    if (qRes) {
+        quoted = parseSingleTweet(qRes);
+    }
+
+    const entityUrls = tw.note_tweet?.note_tweet_results?.result?.entity_set?.urls
+        || legacy.entities?.urls
+        || tw.entities?.urls
+        || [];
+    if (Array.isArray(entityUrls)) {
+        entityUrls.forEach(u => {
+            if (!u || !u.url) return;
+            const expanded = safeHttpsUrl(u.expanded_url);
+            if (!expanded) return;
+            if (quoted && (expanded.includes('/status/' + quoted.id))) {
+                text = text.split(u.url).join('').trim();
+            } else {
+                text = text.split(u.url).join(expanded);
+            }
+        });
+    }
+    text = text.replace(/\s*https?:\/\/t\.co\/\S+$/, '').trim();
 
     let user = extractUser(tw);
 
@@ -3487,14 +3620,8 @@ function parseSingleTweet(tw) {
         }
     });
 
+    // Card & poll extraction; quoted tweet already parsed above
     const { poll, card_preview } = extractCard(tw);
-
-    // Quoted tweet
-    let quoted = null;
-    let qRes = tw.quoted_status_result?.result;
-    if (qRes) {
-        quoted = parseSingleTweet(qRes);
-    }
 
     const rawDate = legacy.created_at || tw.created_at;
     let parsed = {
@@ -4563,10 +4690,11 @@ function renderProfileShell(container) {
         const bannerHtml = (appConfig.image_mode === 'auto' && u.banner)
             ? `<img class="profile-banner" src="${localImageUrl(u.banner, supportsRichModeNative() ? 'rich' : 'hd')}" alt="" onerror="this.remove()" />`
             : `<div class="profile-banner"></div>`;
-        const avatarMode = appConfig.image_mode === 'off' ? 'off' : 'normal';
+        const avatarMode = appConfig.image_mode === 'off' ? 'off' : (appConfig.image_mode === 'auto' ? 'hd' : 'normal');
+        const avatarProxyMode = appConfig.image_mode === 'auto' ? (supportsRichModeNative() ? 'rich' : 'hd') : 'thumb';
         const avatarUrl = avatarVariantUrl(u.avatar, avatarMode);
         const initial = escapeHtml((u.name || u.screen_name || 'X')[0].toUpperCase());
-        const avatarHtml = `<span class="tweet-avatar profile-avatar"><span>${initial}</span>${avatarUrl ? `<img class="tweet-avatar-img" src="${localImageUrl(avatarUrl, 'thumb')}" alt="" onload="this.style.opacity='1'" onerror="this.remove()" />` : ''}</span>`;
+        const avatarHtml = `<span class="tweet-avatar profile-avatar"><span>${initial}</span>${avatarUrl ? `<img class="tweet-avatar-img" src="${localImageUrl(avatarUrl, avatarProxyMode)}" alt="" onload="this.style.opacity='1'" onerror="this.remove()" />` : ''}</span>`;
         const followBtn = !isSelf && u.id
             ? `<button type="button" id="followToggleBtn" class="btn ${u.following ? 'btn-secondary' : ''}" onclick="toggleFollowUser('${escapeHtml(u.id)}')">${u.following ? 'Following' : 'Follow'}</button>`
             : `<button type="button" class="btn btn-secondary" onclick="searchTag('from:${escapeHtml(u.screen_name)}')">Search Posts</button>`;
@@ -4915,7 +5043,7 @@ function renderSettings() {
                 </label>
                 <label style="display:block;">
                     <input type="radio" name="imgMode" value="auto" ${cookies.image_mode === 'auto' ? 'checked' : ''}>
-                    Auto-load previews (rich photos, videos &amp; auto-scroll; uses more data)
+                    Auto-load previews (full-res photos, HD video &amp; quotes; uses more data)
                 </label>
                 <label style="display:block;">
                     <input type="radio" name="imgMode" value="off" ${cookies.image_mode === 'off' ? 'checked' : ''}>
@@ -4995,6 +5123,7 @@ function saveSettings(e) {
         }
         AndroidBridge.saveConfig(auth, ct0, mode);
         appConfig = { auth_token: auth, ct0: ct0, image_mode: mode, avatar_mode: avatarMode, hide_ads: hideAds, sync_seen: syncSeen };
+        syncRichBodyClass();
         updateHeaderActions();
         alert("Saved");
         nav('feed');

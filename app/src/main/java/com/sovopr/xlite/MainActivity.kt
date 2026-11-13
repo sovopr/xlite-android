@@ -7,13 +7,19 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
+import android.view.ViewGroup
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.ByteArrayInputStream
@@ -28,6 +34,9 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var bridge: TwitterBridge
+    private var fullscreenView: View? = null
+    private var fullscreenContainer: FrameLayout? = null
+    private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
     private val client = TwitterBridge.sharedBaseClient.newBuilder()
         .readTimeout(45, TimeUnit.SECONDS)
         .build()
@@ -106,9 +115,54 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                if (view == null) {
+                    callback?.onCustomViewHidden()
+                    return
+                }
+                if (fullscreenView != null) {
+                    callback?.onCustomViewHidden()
+                    return
+                }
+                val root = findViewById<ViewGroup>(android.R.id.content) ?: return
+                val container = FrameLayout(this@MainActivity).apply {
+                    setBackgroundColor(0xFF000000.toInt())
+                    addView(
+                        view,
+                        FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                    )
+                }
+                root.addView(
+                    container,
+                    ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                )
+                fullscreenView = view
+                fullscreenContainer = container
+                fullscreenCallback = callback
+                WindowCompat.setDecorFitsSystemWindows(window, false)
+                WindowInsetsControllerCompat(window, container).apply {
+                    systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    hide(WindowInsetsCompat.Type.systemBars())
+                }
+            }
+
+            override fun onHideCustomView() {
+                exitFullscreenVideo()
+            }
+        }
+
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (webView.canGoBack()) {
+                if (fullscreenView != null) {
+                    exitFullscreenVideo()
+                } else if (webView.canGoBack()) {
                     webView.goBack()
                 } else {
                     finish()
@@ -148,6 +202,29 @@ class MainActivity : AppCompatActivity() {
         if (::bridge.isInitialized) {
             bridge.resumePendingApkInstallIfPermitted()
         }
+    }
+
+    override fun onDestroy() {
+        exitFullscreenVideo()
+        super.onDestroy()
+    }
+
+    private fun exitFullscreenVideo() {
+        val view = fullscreenView ?: return
+        val container = fullscreenContainer
+        val callback = fullscreenCallback
+        fullscreenView = null
+        fullscreenContainer = null
+        fullscreenCallback = null
+        try {
+            if (container != null) {
+                (container.parent as? ViewGroup)?.removeView(container)
+                container.removeView(view)
+            }
+            WindowCompat.setDecorFitsSystemWindows(window, true)
+            WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
+            callback?.onCustomViewHidden()
+        } catch (_: Exception) {}
     }
 
     fun reloadAppUrl() {
@@ -270,8 +347,7 @@ class MainActivity : AppCompatActivity() {
             if (!isBannerOrCard && imageFormat !in setOf("jpg", "jpeg", "png", "webp")) return null
 
             val maxBytes = when (mode) {
-                "hd" -> 2560 * 1024
-                "rich" -> 1536 * 1024
+                "hd", "rich" -> 2560 * 1024
                 else -> 256 * 1024
             }
             val candidates = buildImageCandidateUrls(imageUrl, mode, imageFormat)

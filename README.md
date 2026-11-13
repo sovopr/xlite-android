@@ -27,13 +27,13 @@
 
 ---
 
-## Downloads (v1.0.24)
+## Downloads (v1.0.25)
 
 X Lite ships as a standalone signed Android APK with zero external analytics SDKs or background ad trackers.
 
 | Platform | Package | Size | Description |
 | :--- | :--- | :--- | :--- |
-| **Android 7.0+ (API 24+)** | [**`xlite-fup-release.apk`**](https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk) | ~5 MB | Signed standalone release APK bundling the OLED web client, native HTTP/2 bridge, media proxy cache, and in-app updater. |
+| **Android 7.0+ (API 24+)** | [**`xlite-fup-release.apk`**](https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk) | ~5 MB | Signed standalone release APK bundling the OLED web client, native HTTP/2 bridge, media proxy cache, fullscreen video chrome, and in-app updater. |
 
 Every GitHub release publishes [`SHA256SUMS.txt`](https://github.com/sovopr/xlite-android/releases/latest/download/SHA256SUMS.txt) alongside the APK so both you and the in-app updater verify integrity before installation.
 
@@ -68,7 +68,7 @@ Instead of asking for your X password, X Lite uses the session cookies from a br
 3. Choose how X Lite loads media and timelines:
    - **Image Mode:**
      - **Tap to load small previews** — loads posts fast as text and lets you tap individual previews to view images (recommended for slow data).
-     - **Auto-load previews** — loads rich photos and auto-pausing inline video automatically while scrolling.
+     - **Auto-load previews** — loads full-resolution photos, HD MP4 video with fullscreen support, looping GIFs, and quoted-post media automatically while scrolling.
      - **Text only (0 KB)** — disables post images and video completely.
    - **Profile Pictures:** **Mini** (24px), **Standard** (48px), or **Initials only (0 KB)**.
    - **Promoted Posts (Ads):** Hide ads from feeds or keep them labeled with an **Ad** badge.
@@ -121,7 +121,7 @@ xlite-android/
 │   ├── logo.svg                              # Vector application emblem
 │   ├── social-preview.svg / .png             # Repository social card (1280x640)
 │   ├── dependency-security.md                # Pinned Maven artifacts, zero-npm audit & SBOM pipeline
-│   ├── releases/v1.0.24.md                   # Release notes for v1.0.24
+│   ├── releases/v1.0.25.md                   # Release notes for v1.0.25
 │   └── screenshots/                          # Real Android device WebP screenshots (feed, thread)
 └── .github/
     ├── dependabot.yml                        # Weekly Gradle & GitHub Actions update checks
@@ -176,7 +176,7 @@ flowchart TD
     end
 
     subgraph SecurityGate["2. WebView Sandbox & Policy Gate"]
-        WebHost["MainActivity WebViewClient\n• File confinement (/android_asset & live_index.html)\n• Universal/file URL access disabled\n• Dispatches external https links to OS intents"]
+        WebHost["MainActivity WebView & Chrome Host\n• File confinement (/android_asset & live_index.html)\n• WebChromeClient native fullscreen video overlay\n• Dispatches external https links to OS intents"]
         Policy["XLitePolicy Security Guard\n• HTTPS-only host & path allowlists\n• Port, userinfo & path-traversal blocking\n• Transaction ID format, semver & SHA-256 verification"]
         Bridge["TwitterBridge (@JavascriptInterface)\n• Async GET/POST RPC & callback dispatch\n• Cookie & ct0 CSRF header injection\n• OTA HTML staging & verified APK handoff"]
 
@@ -186,7 +186,7 @@ flowchart TD
 
     subgraph Engines["3. Core Transport, Media & Update Engines"]
         NetPool["Shared OkHttp 4.12 HTTP/2 Engine\n• ConnectionPool (16 conns / 5 min keep-alive)\n• Dispatcher (64 max / 16 per host)\n• Transparent Brotli (br) decompression"]
-        MediaPipe["Media Proxy & WebP Transcoder\n• Resolves pbs.twimg.com format candidates\n• Enforces byte caps (256 KB / 1.5 MB / 2.5 MB)\n• Bounded bitmap scale (380px / 1440px) & WebP encode"]
+        MediaPipe["Media Proxy & WebP Transcoder\n• Resolves pbs.twimg.com format candidates (large first in auto)\n• Enforces byte caps (256 KB thumb / 2.5 MB rich & HD)\n• Full pass-through or bounded scale (380px / 1440px)"]
         Updater["Two-Stage Verified Updater\n• Writes live_index.html atomically\n• Fetches APK (1-64 MB) + sibling SHA256SUMS.txt\n• Checks non-downgrade versionCode & SHA-256"]
     end
 
@@ -229,9 +229,9 @@ flowchart TD
 - **Shared HTTP/2 Client ([`TwitterBridge.kt`](app/src/main/java/com/sovopr/xlite/TwitterBridge.kt))**: Routes API calls, media fetches, and updates from one `ConnectionPool` (`16` idle connections, `5` minute keep-alive) with a `64`-request `Dispatcher` (`16` max per host) and `BrotliInterceptor` for compressed GraphQL payloads.
 - **Query Fallbacks & Signing ([`index.html`](app/src/main/assets/index.html))**: Primary and fallback GraphQL query IDs absorb routine upstream rotations, while `XLitePolicy.isValidTransactionId` validates client-signed `x-client-transaction-id` tokens before dispatching search calls.
 
-#### 2. Bandwidth-Aware WebP Media Pipeline
-- **Localhost Proxy Interception ([`MainActivity.kt`](app/src/main/java/com/sovopr/xlite/MainActivity.kt))**: `WebViewClient.shouldInterceptRequest` intercepts `https://local.xlite/img` requests exclusively for `pbs.twimg.com`, enforcing strict mode-based download limits (`256 KB` thumb, `1536 KB` rich, `2560 KB` HD) and fallback candidate URLs via `XLitePolicy.buildImageCandidateUrls`.
-- **Bounded Decoding & Atomic Disk Cache**: Thumbnails and oversized assets are subsampled and scaled (`380px` / `1440px` max dimension) to compact WebP, while well-sized `rich` and `hd` photos stream through without wasted CPU re-encoding and trim asynchronously under an `80 MB` ceiling in `cacheDir/images/`.
+#### 2. Bandwidth-Aware WebP Media Pipeline & Fullscreen Video
+- **Localhost Proxy Interception ([`MainActivity.kt`](app/src/main/java/com/sovopr/xlite/MainActivity.kt))**: `WebViewClient.shouldInterceptRequest` intercepts `https://local.xlite/img` requests exclusively for `pbs.twimg.com`, enforcing mode-based download limits (`256 KB` thumb, `2560 KB` rich & HD) and `large`-first `XLitePolicy.buildImageCandidateUrls` resolution in `Auto-load previews`.
+- **Full-Resolution Pass-Through & Fullscreen Chrome**: Well-sized `rich` and `hd` photos stream through without wasted CPU re-encoding and trim asynchronously under an `80 MB` ceiling in `cacheDir/images/`, while `WebChromeClient` handles native edge-to-edge fullscreen `<video>` playback.
 
 #### 3. Strict Allowlisting & App-Private Storage Isolation
 - **Defense-in-Depth URL Validation ([`XLitePolicy.kt`](app/src/main/java/com/sovopr/xlite/XLitePolicy.kt))**: Non-HTTPS URLs, custom ports, embedded credentials (`userinfo@`), `..` traversal segments, non-allowlisted GraphQL endpoints, and unapproved release origins are rejected before opening a socket.
@@ -256,7 +256,7 @@ flowchart TD
 | Testing & Static Analysis | JUnit4 (`XLiteUnitTest.kt`), Android Lint (`lintRelease`), Node standard-library test suites (`scripts/*.cjs`), CodeQL SAST |
 | Supply Chain & Dependency Graph | Pinned Gradle coordinates, `.github/dependabot.yml` (`/` & `/app`), Gradle Dependency Submission (`Insights → Dependency graph`) |
 
-See also: [Contributing](CONTRIBUTING.md) · [Security Policy](SECURITY.md) · [Dependency Security](docs/dependency-security.md) · [Code of Conduct](CODE_OF_CONDUCT.md) · [v1.0.24 Release Notes](docs/releases/v1.0.24.md)
+See also: [Contributing](CONTRIBUTING.md) · [Security Policy](SECURITY.md) · [Dependency Security](docs/dependency-security.md) · [Code of Conduct](CODE_OF_CONDUCT.md) · [v1.0.25 Release Notes](docs/releases/v1.0.25.md)
 
 ---
 

@@ -99,7 +99,7 @@ assert.doesNotMatch(textOnly, /<img|\.mp4/);
 vm.runInContext("appConfig.image_mode = 'auto'", context);
 const autoPreview = vm.runInContext(`renderTweetHtml(${JSON.stringify(parsed)})`, context);
 assert.match(autoPreview, /<video\b[^>]*controls playsinline/, 'automatic mode renders inline video player');
-assert.match(autoPreview, /poster="https:\/\/local\.xlite\/img\?url=[^"]*%3Athumb%3Fformat%3Djpg[^"]*mode=thumb"/, 'automatic mode requests the small poster');
+assert.match(autoPreview, /poster="https:\/\/local\.xlite\/img\?url=https%3A%2F%2Fpbs\.twimg\.com%2Fext_tw_video_thumb%2Ftest\.jpg&mode=(?:rich|hd)"/, 'automatic mode requests full-resolution poster');
 assert.match(autoPreview, /src="https:\/\/video\.twimg\.com\/ext_tw_video\/test\/high\.mp4"/);
 assert.doesNotMatch(autoPreview, /evil\.example/, 'untrusted MP4 origins are stripped');
 
@@ -713,6 +713,86 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
     }));
     assert.doesNotMatch(rMain.innerHTML, /Three crisp photos/, 'Already-seen post filtered on For You refresh');
     assert.match(rMain.innerHTML, /Fresh post/, 'Unseen post shown');
+
+    // Full-quality Auto mode: HD video default + SD fallback + mutually exclusive play + rich poster + quoted media + expanded URLs + zero ads
+    const multiBitrateRaw = {
+        rest_id: '777100',
+        core: { user_results: { result: { rest_id: '55', legacy: { name: 'Studio', screen_name: 'studio', profile_image_url_https: 'https://pbs.twimg.com/profile_images/55/pfp_normal.jpg' } } } },
+        legacy: {
+            full_text: 'Read https://t.co/doc123 before watching https://t.co/quote999',
+            entities: {
+                urls: [
+                    { url: 'https://t.co/doc123', expanded_url: 'https://example.com/guide' },
+                    { url: 'https://t.co/quote999', expanded_url: 'https://x.com/studio/status/777101' }
+                ]
+            },
+            extended_entities: {
+                media: [{
+                    media_url_https: 'https://pbs.twimg.com/ext_tw_video_thumb/777100/pu/img/poster.jpg',
+                    type: 'video',
+                    video_info: {
+                        duration_millis: 12000,
+                        variants: [
+                            { content_type: 'video/mp4', bitrate: 432000, url: 'https://video.twimg.com/ext_tw_video/777100/sd.mp4' },
+                            { content_type: 'video/mp4', bitrate: 2176000, url: 'https://video.twimg.com/ext_tw_video/777100/hd.mp4' }
+                        ]
+                    }
+                }]
+            }
+        },
+        quoted_status_result: {
+            result: {
+                rest_id: '777101',
+                core: { user_results: { result: { rest_id: '56', legacy: { name: 'Quoted', screen_name: 'quoted', profile_image_url_https: 'https://pbs.twimg.com/profile_images/56/q_normal.jpg' } } } },
+                legacy: {
+                    full_text: 'Quoted visual breakdown',
+                    extended_entities: { media: [{ media_url_https: 'https://pbs.twimg.com/media/quotedpic.jpg', type: 'photo' }] }
+                }
+            }
+        }
+    };
+    const hdMultiParsed = vm.runInContext(`parseSingleTweet(${JSON.stringify(multiBitrateRaw)})`, rCtx);
+    assert.equal(hdMultiParsed.video_url || hdMultiParsed.media[0].video_url, 'https://video.twimg.com/ext_tw_video/777100/sd.mp4');
+    assert.equal(hdMultiParsed.media[0].hd_video_url, 'https://video.twimg.com/ext_tw_video/777100/hd.mp4');
+    assert.equal(hdMultiParsed.text, 'Read https://example.com/guide before watching', 'expands entity URLs and trims redundant quote link');
+
+    const hdMultiHtml = vm.runInContext(`appConfig.avatar_mode = 'normal'; renderTweetHtml(${JSON.stringify(hdMultiParsed)})`, rCtx);
+    assert.match(hdMultiHtml, /src="https:\/\/video\.twimg\.com\/ext_tw_video\/777100\/hd\.mp4"/, 'Auto mode defaults directly to full HD video bitrate');
+    assert.match(hdMultiHtml, /data-fallback-src="https:\/\/video\.twimg\.com\/ext_tw_video\/777100\/sd\.mp4"/, 'HD video retains SD fallback');
+    assert.match(hdMultiHtml, /onplay="pauseOtherVideos\(this\)"/);
+    assert.match(hdMultiHtml, /HD ✓/, 'HD toggle indicates active HD stream');
+    assert.match(hdMultiHtml, /poster\.jpg[^"]*mode=rich/, 'Auto mode requests crisp video poster');
+    assert.match(hdMultiHtml, /pfp_bigger\.jpg[^"]*mode=rich/, 'Auto mode upgrades normal avatars cleanly');
+    assert.match(hdMultiHtml, /quotedpic\.jpg[^"]*mode=rich/, 'Auto mode renders media inside quoted tweets');
+
+    // Every ad vector is blocked when hide_ads is active
+    const sneakyAds = rCtx.parseTwitterGraphql(JSON.stringify({
+        data: {
+            home: {
+                home_timeline_urt: {
+                    instructions: [{
+                        type: 'TimelineAddEntries',
+                        entries: [
+                            { entryId: 'promoted-tweet-1', content: { itemContent: { itemType: 'TimelineTweet', tweet_results: { result: { rest_id: 'ad1', legacy: { full_text: 'Ad one' } } } } } },
+                            { entryId: 'tweet-2', content: { clientEventInfo: { details: { timelinesDetails: { injectionType: 'FeedPromoted' } } }, itemContent: { itemType: 'TimelineTweet', tweetDisplayType: 'Promoted', tweet_results: { result: { rest_id: 'ad2', legacy: { full_text: 'Ad two' } } } } } },
+                            { entryId: 'tweet-3', content: { itemContent: { itemType: 'TimelineTweet', promoted_metadata: { ad: true }, tweet_results: { result: { rest_id: 'ad3', legacy: { full_text: 'Ad three' } } } } } },
+                            { entryId: 'tweet-ok', content: { itemContent: { itemType: 'TimelineTweet', tweet_results: { result: { rest_id: 'ok1', legacy: { full_text: 'Organic signal' } } } } } }
+                        ]
+                    }]
+                }
+            }
+        }
+    }));
+    assert.equal(Array.from(sneakyAds.tweets, t => t.id).join(','), 'ok1', 'All promoted ad formats are filtered');
+
+    const restAdParsed = rCtx.parseTwitterGraphql(JSON.stringify({
+        statuses: [
+            { id_str: 'rad1', promoted: true, full_text: 'REST Promoted' },
+            { id_str: 'rok1', full_text: 'REST Organic' }
+        ]
+    }));
+    assert.equal(Array.from(restAdParsed.tweets, t => t.id).join(','), 'rok1', 'REST fallback respects hide_ads');
+
     vm.runInContext("if (seenSaveDebounce) clearTimeout(seenSaveDebounce); if (seenFlushTimer) clearTimeout(seenFlushTimer);", rCtx);
 })();
 

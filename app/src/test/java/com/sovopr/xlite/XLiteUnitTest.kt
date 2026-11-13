@@ -130,7 +130,11 @@ class XLiteUnitTest {
 
         val mediaHd = XLitePolicy.buildImageCandidateUrls("https://pbs.twimg.com/media/AbCdEf.jpg", "hd", "jpeg")
         assertEquals("https://pbs.twimg.com/media/AbCdEf.jpg?format=webp&name=large", mediaHd.first())
-        assertTrue(mediaHd.contains("https://pbs.twimg.com/media/AbCdEf.jpg?format=jpg&name=medium"))
+        assertTrue(mediaHd.contains("https://pbs.twimg.com/media/AbCdEf.jpg?format=jpg&name=large"))
+
+        val mediaRich = XLitePolicy.buildImageCandidateUrls("https://pbs.twimg.com/media/AbCdEf.jpg", "rich", "jpeg")
+        assertEquals("https://pbs.twimg.com/media/AbCdEf.jpg?format=webp&name=large", mediaRich.first())
+        assertTrue(mediaRich.contains("https://pbs.twimg.com/media/AbCdEf.jpg?format=webp&name=medium"))
 
         val bannerCandidates = XLitePolicy.buildImageCandidateUrls("https://pbs.twimg.com/profile_banners/123/456", "thumb", "jpg")
         assertEquals(
@@ -141,9 +145,20 @@ class XLiteUnitTest {
             bannerCandidates
         )
 
+        val richBannerCandidates = XLitePolicy.buildImageCandidateUrls("https://pbs.twimg.com/profile_banners/123/456", "rich", "jpg")
+        assertEquals(
+            listOf(
+                "https://pbs.twimg.com/profile_banners/123/456/1500x500",
+                "https://pbs.twimg.com/profile_banners/123/456/600x200",
+                "https://pbs.twimg.com/profile_banners/123/456"
+            ),
+            richBannerCandidates
+        )
+
         val videoThumb = XLitePolicy.buildImageCandidateUrls("https://pbs.twimg.com/ext_tw_video_thumb/99/pu/img/vid.jpg:large", "rich", "jpg")
         assertEquals(
             listOf(
+                "https://pbs.twimg.com/ext_tw_video_thumb/99/pu/img/vid.jpg:large",
                 "https://pbs.twimg.com/ext_tw_video_thumb/99/pu/img/vid.jpg:medium",
                 "https://pbs.twimg.com/ext_tw_video_thumb/99/pu/img/vid.jpg:small",
                 "https://pbs.twimg.com/ext_tw_video_thumb/99/pu/img/vid.jpg"
