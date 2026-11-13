@@ -78,13 +78,15 @@ chmod +x gradlew
 
 ## Pull Request Guidelines
 
+**PR-Only `main` Branch Policy:** Direct pushes to `main` are blocked (including for repository maintainers). Every change—including documentation updates and dependency bumps—must go through a Pull Request targeting `main` with linear history, resolved review threads, and all required CI status checks passing.
+
 1. **Branch Naming**: Use descriptive branch names:
    - `fix/issue-description`
    - `feat/feature-name`
    - `docs/clarification`
 2. **Commit Style**: Use clear, concise commit messages following the [Conventional Commits](https://www.conventionalcommits.org/) format (e.g. `feat: verify apk updates with sha256`, `fix: handle quoted retweet text`).
 3. **Keep PRs Focused**: Avoid bundling unrelated changes into a single pull request.
-4. **Pass All Status Checks**: All PRs must pass deterministic CI checks before being merged.
+4. **Pass All Status Checks**: All PRs must pass `Web UI & Static Verification` and `Android Kotlin Test, Lint & Build` (and stay up to date with `main`) before being merged.
 5. **Fill out the Pull Request Template**: Provide context on what changed and how you tested it.
 
 ---
