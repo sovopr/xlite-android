@@ -193,8 +193,8 @@ function runExtendedActionTests() {
     let stopped = false;
     extCtx.toggleBookmark('900', { stopPropagation() { stopped = true; } });
     assert.equal(stopped, true, 'Save stops event propagation');
-    assert.equal(bmElA.textContent, '★ Saved');
-    assert.equal(bmElB.textContent, '★ Saved', 'All matching Save buttons update');
+    assert.match(bmElA.innerHTML, /<svg[^>]*icon-svg filled[^>]*>[\s\S]*<span>Saved<\/span>$/);
+    assert.match(bmElB.innerHTML, /<svg[^>]*icon-svg filled[^>]*>[\s\S]*<span>Saved<\/span>$/, 'All matching Save buttons update');
     assert.equal(JSON.parse(store.cache_bookmarks).length, 1);
     assert.equal(mainContent.innerHTML.includes('Saved Tweets (1)'), true, 'Offline tab renders Saved Tweets immediately');
     assert.equal(statusBarEl.textContent, 'Saved for offline reading', 'Offline re-render preserves save toast');
@@ -208,7 +208,7 @@ function runExtendedActionTests() {
     // Legacy bridge without executePostWithTransactionAsync blocks Like/Retweet clearly & reverts
     delete extCtx.AndroidBridge.executePostWithTransactionAsync;
     extCtx.toggleLike('900');
-    assert.equal(likeElA.textContent, '♡ 5', 'Like reverts when APK lacks signed POST bridge');
+    assert.match(likeElA.innerHTML, /<svg[^>]*icon-svg"[^>]*>[\s\S]*<span>5<\/span>$/, 'Like reverts when APK lacks signed POST bridge');
     assert.match(statusBarEl.textContent, /Update to v1\.0\.16 APK/);
 
     // Signed Like, Retweet, Bookmark & CreateTweet flow
@@ -224,8 +224,8 @@ function runExtendedActionTests() {
 
     // Like + lock + revert on failure
     extCtx.toggleLike('900');
-    assert.equal(likeElA.textContent, '♥ 6');
-    assert.equal(likeElB.textContent, '♥ 6', 'Detached/duplicate node stays in sync');
+    assert.match(likeElA.innerHTML, /<svg[^>]*icon-svg filled[^>]*>[\s\S]*<span>6<\/span>$/);
+    assert.match(likeElB.innerHTML, /<svg[^>]*icon-svg filled[^>]*>[\s\S]*<span>6<\/span>$/, 'Detached/duplicate node stays in sync');
     assert.equal(likeElA.classList.contains('liked'), true);
     assert.equal(signedRequests.length, 1);
     assert.match(signedRequests[0].url, /\/FavoriteTweet$/);
@@ -237,29 +237,29 @@ function runExtendedActionTests() {
 
     // Unlike failure reverts state back cleanly
     extCtx.toggleLike('900');
-    assert.equal(likeElA.textContent, '♡ 5');
+    assert.match(likeElA.innerHTML, /<svg[^>]*icon-svg"[^>]*>[\s\S]*<span>5<\/span>$/);
     assert.match(signedRequests[0].url, /\/UnfavoriteTweet$/);
     extCtx.__onAsyncFinish(signedRequests.shift().callbackId, JSON.stringify({ error: true, message: 'Server 500' }));
-    assert.equal(likeElA.textContent, '♥ 6', 'Failed unlike reverts back to liked');
+    assert.match(likeElA.innerHTML, /<svg[^>]*icon-svg filled[^>]*>[\s\S]*<span>6<\/span>$/, 'Failed unlike reverts back to liked');
     assert.match(statusBarEl.textContent, /Like failed: Server 500/);
 
     // Retweet & Unretweet uses source_tweet_id
     extCtx.toggleRetweet('900');
-    assert.equal(rtEl.textContent, '⇄ 3');
+    assert.match(rtEl.innerHTML, /<svg[^>]*icon-svg"[^>]*>[\s\S]*<span>3<\/span>$/);
     assert.equal(rtEl.classList.contains('retweeted'), true);
     assert.match(signedRequests[0].url, /\/CreateRetweet$/);
     assert.equal(signedRequests[0].payload.variables.tweet_id, '900');
     extCtx.__onAsyncFinish(signedRequests.shift().callbackId, JSON.stringify({ data: { create_retweet: { retweet_results: { result: {} } } } }));
 
     extCtx.toggleRetweet('900');
-    assert.equal(rtEl.textContent, '⇄ 2');
+    assert.match(rtEl.innerHTML, /<svg[^>]*icon-svg"[^>]*>[\s\S]*<span>2<\/span>$/);
     assert.match(signedRequests[0].url, /\/DeleteRetweet$/);
     assert.equal(signedRequests[0].payload.variables.source_tweet_id, '900');
     extCtx.__onAsyncFinish(signedRequests.shift().callbackId, JSON.stringify({ data: { unretweet: { source_tweet_results: {} } } }));
 
     // Save when online triggers CreateBookmark too without blocking offline save
     extCtx.toggleBookmark('900');
-    assert.equal(bmElA.textContent, '★ Saved');
+    assert.match(bmElA.innerHTML, /<svg[^>]*icon-svg filled[^>]*>[\s\S]*<span>Saved<\/span>$/);
     assert.equal(signedRequests.length, 1);
     assert.match(signedRequests[0].url, /\/CreateBookmark$/);
     extCtx.__onAsyncFinish(signedRequests.shift().callbackId, JSON.stringify({ error: true, message: 'Offline' }));
@@ -282,7 +282,7 @@ function runExtendedActionTests() {
     assert.match(signedRequests[0].url, /\/wR5Z_lEibLvkew3tF9w-Sg\/CreateTweet$/);
     vm.runInContext("renderThreadView = () => {};", extCtx);
     extCtx.__onAsyncFinish(signedRequests.shift().callbackId, JSON.stringify({ data: { create_tweet: { tweet_results: { result: {} } } } }));
-    assert.equal(replyEl.textContent, '💬 2', 'Successful reply increments parent reply count');
+    assert.match(replyEl.innerHTML, /<svg[^>]*icon-svg"[^>]*>[\s\S]*<span>2<\/span>$/, 'Successful reply increments parent reply count');
 
     // compareSemver, Settings APK update banner, and downloadApkUpdate bridge delegation
     assert.equal(extCtx.compareSemver('1.0.17', '1.0.16') > 0, true);
@@ -455,17 +455,20 @@ function runExtendedActionTests() {
     assert.equal(apkInstalls.length, 0, 'does not call legacy installer when verified installer handles update');
     delete extCtx.AndroidBridge.installApkUpdateVerifiedAsync;
 
-    // Settings renders Profile Pictures, Hide Ads & Seen Sync preferences and saveSettings persists them
+    // Settings renders Video Autoplay, Profile Pictures, Hide Ads & Seen Sync preferences and saveSettings persists them
     store.cache_pref_avatar_mode = 'normal';
     store.cache_pref_hide_ads = 'false';
     store.cache_pref_sync_seen = 'false';
     extCtx.renderSettings();
+    assert.match(mainContent.innerHTML, /Video Autoplay/);
+    assert.match(mainContent.innerHTML, /name="autoplayVideos" value="true" checked/, 'Video Autoplay is enabled by default');
     assert.match(mainContent.innerHTML, /Profile Pictures/);
     assert.match(mainContent.innerHTML, /name="avatarMode" value="normal" checked/);
     assert.match(mainContent.innerHTML, /Promoted Posts \(Ads\)/);
     assert.match(mainContent.innerHTML, /name="hideAds" value="false" checked/);
     assert.match(mainContent.innerHTML, /Sync Seen Posts to X/);
     assert.match(mainContent.innerHTML, /name="syncSeen" value="false" checked/);
+    assert.doesNotMatch(mainContent.innerHTML, /[📦✓]/u, 'Settings uses inline SVG icons rather than pictographs');
 
     let savedConfigArgs = null;
     let cacheClearedCount = 0;
@@ -606,6 +609,14 @@ function runExtendedActionTests() {
     assert.deepEqual(directModeCalls, ['tap']);
     assert.equal(nativePrefs.image_mode, 'tap');
     assert.equal(prefStore.get('pref_image_mode'), 'tap');
+
+    extCtx.handleSettingPrefChange('autoplayVideos', 'false');
+    assert.equal(prefStore.get('pref_autoplay_videos'), 'false', 'Video Autoplay preference writes immediately');
+    assert.equal(vm.runInContext('appConfig.autoplay_videos', extCtx), false);
+    extCtx.renderSettings();
+    assert.match(mainContent.innerHTML, /name="autoplayVideos" value="false" checked/);
+    extCtx.init();
+    assert.equal(vm.runInContext('appConfig.autoplay_videos', extCtx), false, 'init() keeps Video Autoplay disabled when toggled off');
 
     vm.runInContext("if (seenSaveDebounce) clearTimeout(seenSaveDebounce); if (seenFlushTimer) clearTimeout(seenFlushTimer);", extCtx);
 
