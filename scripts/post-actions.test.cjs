@@ -403,11 +403,14 @@ function runExtendedActionTests() {
     assert.equal(apkInstalls.length, 0, 'web-only update skips APK download');
     assert.equal(savedHtmls.length, 2);
 
-    // Settings renders Profile Pictures preference and saveSettings persists pref_avatar_mode
+    // Settings renders Profile Pictures & Hide Ads preferences and saveSettings persists them
     store.cache_pref_avatar_mode = 'normal';
+    store.cache_pref_hide_ads = 'false';
     extCtx.renderSettings();
     assert.match(mainContent.innerHTML, /Profile Pictures/);
     assert.match(mainContent.innerHTML, /name="avatarMode" value="normal" checked/);
+    assert.match(mainContent.innerHTML, /Promoted Posts \(Ads\)/);
+    assert.match(mainContent.innerHTML, /name="hideAds" value="false" checked/);
 
     let savedConfigArgs = null;
     let cacheClearedCount = 0;
@@ -422,11 +425,13 @@ function runExtendedActionTests() {
     extCtx.document.querySelector = sel => {
         if (sel === 'input[name="imgMode"]:checked') return { value: 'tap' };
         if (sel === 'input[name="avatarMode"]:checked') return { value: 'mini' };
+        if (sel === 'input[name="hideAds"]:checked') return { value: 'true' };
         return null;
     };
     vm.runInContext("nav = () => {};", extCtx);
     extCtx.saveSettings({ preventDefault() {} });
     assert.equal(store.cache_pref_avatar_mode, 'mini');
+    assert.equal(store.cache_pref_hide_ads, 'true');
     assert.deepEqual(savedConfigArgs, { a: 'tok', c: 'csrf', m: 'tap' });
 
     console.log('Async post and reply tests passed.');

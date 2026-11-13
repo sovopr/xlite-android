@@ -1350,7 +1350,7 @@ let currentTab = 'following';
 let currentFeedOrigin = 'following';
 let cursors = { following: null, foryou: null };
 let usedFeedCursors = { following: new Set(), foryou: new Set() };
-let appConfig = { auth_token: '', ct0: '', image_mode: 'tap', avatar_mode: 'mini' };
+let appConfig = { auth_token: '', ct0: '', image_mode: 'tap', avatar_mode: 'mini', hide_ads: true };
 let currentTweetsList = [];
 let allTweetsMap = {};
 let bookmarksCache = null;
@@ -1358,8 +1358,8 @@ let isFetching = false;
 let pendingCallbacks = {};
 const pendingActionLocks = {};
 const activeImageLoads = new Set();
-const APP_VERSION = '1.0.20';
-const APP_BUILD = '2026.11.13.5';
+const APP_VERSION = '1.0.21';
+const APP_BUILD = '2026.11.13.6';
 const LATEST_APK_VERSION = '1.0.18';
 const LATEST_APK_URL = 'https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk';
 let activeApkDownloadState = null;
@@ -1495,24 +1495,47 @@ const POST_MUTATIONS = {
     }
 };
 
-function readSavedAvatarMode() {
+function readCachePref(cacheKey, storageKey) {
     let pref = '';
     if (window.AndroidBridge && typeof AndroidBridge.getCache === 'function') {
-        try { pref = AndroidBridge.getCache('pref_avatar_mode') || ''; } catch (_) {}
+        try { pref = AndroidBridge.getCache(cacheKey) || ''; } catch (_) {}
     }
     if (!pref) {
-        try { pref = localStorage.getItem('xlite_avatar_mode') || ''; } catch (_) {}
+        try { pref = localStorage.getItem(storageKey) || ''; } catch (_) {}
     }
+    return pref;
+}
+
+function writeCachePref(cacheKey, storageKey, value) {
+    if (window.AndroidBridge && typeof AndroidBridge.saveCache === 'function') {
+        try { AndroidBridge.saveCache(cacheKey, value); } catch (_) {}
+    }
+    try { localStorage.setItem(storageKey, value); } catch (_) {}
+    return value;
+}
+
+function readSavedAvatarMode() {
+    const pref = readCachePref('pref_avatar_mode', 'xlite_avatar_mode');
     return ['mini', 'normal', 'off'].includes(pref) ? pref : 'mini';
 }
 
 function saveAvatarModePref(mode) {
-    const clean = ['mini', 'normal', 'off'].includes(mode) ? mode : 'mini';
-    if (window.AndroidBridge && typeof AndroidBridge.saveCache === 'function') {
-        try { AndroidBridge.saveCache('pref_avatar_mode', clean); } catch (_) {}
-    }
-    try { localStorage.setItem('xlite_avatar_mode', clean); } catch (_) {}
-    return clean;
+    return writeCachePref('pref_avatar_mode', 'xlite_avatar_mode', ['mini', 'normal', 'off'].includes(mode) ? mode : 'mini');
+}
+
+function readSavedHideAds() {
+    const pref = readCachePref('pref_hide_ads', 'xlite_hide_ads');
+    return pref !== 'false' && pref !== 'off';
+}
+
+function saveHideAdsPref(hide) {
+    const enabled = hide !== false && hide !== 'false' && hide !== 'off';
+    writeCachePref('pref_hide_ads', 'xlite_hide_ads', enabled ? 'true' : 'false');
+    return enabled;
+}
+
+function shouldHideAds() {
+    return appConfig.hide_ads !== false;
 }
 
 function init() {
@@ -1524,6 +1547,7 @@ function init() {
         }
     }
     appConfig.avatar_mode = readSavedAvatarMode();
+    appConfig.hide_ads = readSavedHideAds();
     try {
         let saved = localStorage.getItem('last_active_tab');
         if (saved && ['following', 'foryou', 'cache'].includes(saved)) {
@@ -2354,8 +2378,30 @@ function findInstructions(obj) {
     return null;
 }
 
-function isPromotedItem(item, entryId) {
-    return !!(item?.promotedMetadata || (entryId && String(entryId).startsWith('promoted-tweet-')));
+function isPromotedItem(item, entryId, container) {
+    const injectionType = String(
+        container?.clientEventInfo?.details?.timelinesDetails?.injectionType ||
+        item?.clientEventInfo?.details?.timelinesDetails?.injectionType ||
+        ''
+    );
+    return !!(
+        item?.promotedMetadata ||
+        item?.adMetadataContainer ||
+        (entryId && String(entryId).startsWith('promoted-')) ||
+        /promoted$/i.test(injectionType)
+    );
+}
+
+function collectTimelineTweet(tweets, item, res, entryId, container) {
+    if (!res) return;
+    let parsed = parseSingleTweet(res);
+    if (!parsed) return;
+    if (isPromotedItem(item, entryId, container)) {
+        parsed.is_ad = true;
+        if (shouldHideAds()) return;
+    }
+    allTweetsMap[parsed.id] = parsed;
+    tweets.push(parsed);
 }
 
 function parseTwitterGraphql(jsonStr) {
@@ -2416,17 +2462,7 @@ function parseTwitterGraphql(jsonStr) {
 
         let item = content.itemContent;
         if (item && item.itemType === 'TimelineTweet') {
-            let res = item.tweet_results?.result;
-            if (res) {
-                let parsed = parseSingleTweet(res);
-                if (parsed) {
-                    if (isPromotedItem(item, entry.entryId)) {
-                        parsed.is_ad = true;
-                        allTweetsMap[parsed.id] = parsed;
-                    }
-                    tweets.push(parsed);
-                }
-            }
+            collectTimelineTweet(tweets, item, item.tweet_results?.result, entry.entryId, content);
         }
 
         // Conversation thread replies & modules
@@ -2434,17 +2470,7 @@ function parseTwitterGraphql(jsonStr) {
         subItems.forEach(sub => {
             let sItem = sub.item?.itemContent || sub.itemContent || sub.item?.content?.itemContent;
             if (sItem && sItem.itemType === 'TimelineTweet') {
-                let sRes = sItem.tweet_results?.result || sItem.result;
-                if (sRes) {
-                    let parsed = parseSingleTweet(sRes);
-                    if (parsed) {
-                        if (isPromotedItem(sItem, sub.entryId)) {
-                            parsed.is_ad = true;
-                            allTweetsMap[parsed.id] = parsed;
-                        }
-                        tweets.push(parsed);
-                    }
-                }
+                collectTimelineTweet(tweets, sItem, sItem.tweet_results?.result || sItem.result, sub.entryId || entry.entryId, sub.item || sItem);
             }
         });
     });
@@ -2566,6 +2592,7 @@ function loadFeed(feedType, forceRefresh = false, preserveStatus = false) {
             const parsed = cached ? JSON.parse(cached) : [];
             if (Array.isArray(parsed)) cachedList = parsed;
         } catch(e){}
+        if (shouldHideAds()) cachedList = cachedList.filter(t => t && !t.is_ad);
 
         bookmarks.forEach(t => { if (t && t.id) allTweetsMap[t.id] = { ...(allTweetsMap[t.id] || {}), ...t }; });
         cachedList.forEach(t => { if (t && t.id && !allTweetsMap[t.id]) allTweetsMap[t.id] = t; });
@@ -2598,6 +2625,7 @@ function loadFeed(feedType, forceRefresh = false, preserveStatus = false) {
     if (cachedFeed) {
         try {
             let list = JSON.parse(cachedFeed);
+            if (Array.isArray(list) && shouldHideAds()) list = list.filter(t => t && !t.is_ad);
             if (list && list.length > 0) {
                 currentTweetsList = list;
                 cursors[feedType] = window.AndroidBridge ? AndroidBridge.getCache('feed_cursor_' + feedType) || null : null;
@@ -3357,6 +3385,7 @@ function renderSettings() {
     const container = document.getElementById('mainContent');
     let cookies = { auth_token: '', ct0: '', image_mode: 'tap' };
     let avatarMode = readSavedAvatarMode();
+    let hideAds = readSavedHideAds();
     let isLive = false;
     let versionInfo = { version: APP_VERSION, build: APP_BUILD, isLive: false };
     let apkStatus = { downloading: false, canInstall: true, cachedVersion: null };
@@ -3484,6 +3513,18 @@ function renderSettings() {
                 </label>
             </div>
 
+            <div class="card-title" style="font-size:15px; margin: 16px 0 6px;">Promoted Posts (Ads)</div>
+            <div style="font-size:14px; line-height:2; margin-bottom:16px;">
+                <label style="display:block;">
+                    <input type="radio" name="hideAds" value="true" ${hideAds ? 'checked' : ''}>
+                    Hide ads from feeds (recommended)
+                </label>
+                <label style="display:block;">
+                    <input type="radio" name="hideAds" value="false" ${!hideAds ? 'checked' : ''}>
+                    Show ads with an Ad badge
+                </label>
+            </div>
+
             <button type="submit" class="btn btn-block">Save Configuration</button>
         </form>
     </div>
@@ -3502,6 +3543,7 @@ function saveSettings(e) {
     const ct0 = document.getElementById('cfgCt0').value.trim();
     const mode = document.querySelector('input[name="imgMode"]:checked').value;
     const avatarMode = saveAvatarModePref(document.querySelector('input[name="avatarMode"]:checked')?.value || 'mini');
+    const hideAds = saveHideAdsPref((document.querySelector('input[name="hideAds"]:checked')?.value || 'true') === 'true');
 
     if (window.AndroidBridge) {
         if (auth !== appConfig.auth_token || ct0 !== appConfig.ct0) {
@@ -3510,7 +3552,7 @@ function saveSettings(e) {
             bookmarksCache = [];
         }
         AndroidBridge.saveConfig(auth, ct0, mode);
-        appConfig = { auth_token: auth, ct0: ct0, image_mode: mode, avatar_mode: avatarMode };
+        appConfig = { auth_token: auth, ct0: ct0, image_mode: mode, avatar_mode: avatarMode, hide_ads: hideAds };
         alert("Saved");
         nav('feed');
     }

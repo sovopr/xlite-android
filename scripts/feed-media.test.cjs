@@ -455,6 +455,26 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
                                             }
                                         ]
                                     }
+                                },
+                                {
+                                    entryId: 'tweet-9904',
+                                    content: {
+                                        itemContent: {
+                                            itemType: 'TimelineTweet',
+                                            tweet_results: {
+                                                result: {
+                                                    rest_id: '9904',
+                                                    core: { user_results: { result: { core: { name: 'Injected Ad', screen_name: 'injad' } } } },
+                                                    legacy: { id_str: '9904', full_text: 'Marked via injectionType' }
+                                                }
+                                            }
+                                        },
+                                        clientEventInfo: { details: { timelinesDetails: { injectionType: 'ForYouPromoted' } } }
+                                    }
+                                },
+                                {
+                                    entryId: 'cursor-bottom-9999',
+                                    content: { entryType: 'TimelineTimelineCursor', cursorType: 'Bottom', value: 'CURSOR_AFTER_ADS' }
                                 }
                             ]
                         }
@@ -463,13 +483,47 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
             }
         }
     });
+    // Default behavior hides promoted ads across timelines while preserving organic posts & cursor
+    const filteredParsed = hdCtx.parseTwitterGraphql(promoResponse);
+    assert.equal(filteredParsed.tweets.length, 1, 'Promoted ads are hidden by default');
+    assert.equal(filteredParsed.tweets[0].id, '9902');
+    assert.equal(filteredParsed.nextCursor, 'CURSOR_AFTER_ADS');
+
+    // Stale cached ads from earlier versions are also stripped on loadFeed when hide_ads is enabled
+    const cacheMainEl = { innerHTML: '', insertAdjacentHTML() {} };
+    hdCtx.document.getElementById = id => {
+        if (id === 'mainContent') return cacheMainEl;
+        if (id === 'hd-target') return targetImg;
+        return null;
+    };
+    hdCtx.AndroidBridge = hdCtx.window.AndroidBridge = {
+        getCache(key) {
+            if (key === 'feed_foryou') {
+                return JSON.stringify([
+                    { id: '9901', text: 'Cached ad', user_name: 'Ad', user_screen_name: 'ad', is_ad: true },
+                    { id: '9902', text: 'Cached organic', user_name: 'Regular User', user_screen_name: 'reguser', is_ad: false }
+                ]);
+            }
+            if (key === 'feed_updated_foryou') return String(Date.now());
+            return '';
+        },
+        saveCache() {},
+        executeGetAsync() {}
+    };
+    hdCtx.loadFeed('foryou');
+    assert.doesNotMatch(cacheMainEl.innerHTML, /Cached ad/, 'Previously cached ads are hidden immediately');
+    assert.match(cacheMainEl.innerHTML, /Cached organic/);
+
+    // Opting in to show ads displays them with the Ad badge and decoded HTML entities
+    vm.runInContext("appConfig.hide_ads = false;", hdCtx);
     const promoParsed = hdCtx.parseTwitterGraphql(promoResponse);
-    assert.equal(promoParsed.tweets.length, 3);
-    const [adTweet, organicTweet, moduleAdTweet] = promoParsed.tweets;
+    assert.equal(promoParsed.tweets.length, 4);
+    const [adTweet, organicTweet, moduleAdTweet, injectedAdTweet] = promoParsed.tweets;
     assert.equal(adTweet.is_ad, true);
     assert.equal(adTweet.user_name, 'Emory & Blanc');
     assert.equal(organicTweet.is_ad, false);
     assert.equal(moduleAdTweet.is_ad, true);
+    assert.equal(injectedAdTweet.is_ad, true);
 
     const adMarkup = hdCtx.renderTweetHtml(adTweet);
     assert.match(adMarkup, /<span class="ad-badge">Ad<\/span>/);
@@ -482,6 +536,7 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
     const organicMarkup = hdCtx.renderTweetHtml(organicTweet);
     assert.doesNotMatch(organicMarkup, /ad-badge/);
     assert.match(organicMarkup, /&amp;amp; &amp;lt;tag&amp;gt;/, 'User-typed literal entities remain literal');
+    vm.runInContext("appConfig.hide_ads = true;", hdCtx);
 })();
 
 console.log('Feed navigation, refresh, and image retry tests passed.');
