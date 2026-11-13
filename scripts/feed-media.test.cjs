@@ -892,7 +892,7 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
 
 (() => {
     // Persistent compact ClientTransaction cache enables 0-roundtrip cold starts and recovers on 401
-    const txScript = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)][0][1];
+    const txScript = html.split('<script>')[1].split('</script>')[0];
     const persistentKv = new Map();
     const validKey = Buffer.from(Array.from({ length: 48 }, (_, i) => (i * 11 + 7) % 256)).toString('base64');
     const makeSvg = id => `<svg id="loading-x-anim-${id}"><path d="M0 0"></path><path d="M 10 20 30 40 50 60 70 C 120 80 140 160 90 210 180 40 200 110"></path></svg>`;
