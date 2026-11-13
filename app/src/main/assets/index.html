@@ -105,6 +105,8 @@ a { color: var(--accent); text-decoration: none; }
 .tweet {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
+  content-visibility: auto;
+  contain-intrinsic-size: 0 210px;
 }
 .tweet:active {
   background: rgba(255, 255, 255, 0.02);
@@ -413,12 +415,246 @@ a { color: var(--accent); text-decoration: none; }
   padding: 4px 8px;
   border-radius: 9999px;
 }
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.header-btn {
+  background: #16181c;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  height: 32px;
+  padding: 0 11px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.header-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.verified-badge {
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  vertical-align: -2px;
+  margin-left: 3px;
+  flex-shrink: 0;
+}
+/* Rich media, photo grids, video, cards, polls */
+.media-grid {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #16181c;
+}
+.media-grid-1 { grid-template-columns: 1fr; }
+.media-grid-2 { grid-template-columns: 1fr 1fr; }
+.media-grid-3 { grid-template-columns: 1fr 1fr; grid-template-rows: 135px 135px; }
+.media-grid-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 135px 135px; }
+.media-grid-1 .tweet-img {
+  margin-top: 0;
+  border: none;
+  border-radius: 0;
+  width: 100%;
+  max-height: 440px;
+  object-fit: cover;
+  cursor: zoom-in;
+}
+.media-grid-2 .tweet-img,
+.media-grid-3 .tweet-img,
+.media-grid-4 .tweet-img {
+  margin-top: 0;
+  border: none;
+  border-radius: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  cursor: zoom-in;
+}
+.media-grid-2 .tweet-img { height: 210px; }
+.media-grid-3 .media-cell-0 { grid-row: 1 / span 2; }
+.video-wrap {
+  position: relative;
+  margin-top: 8px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #0d0f12;
+}
+.tweet-video {
+  display: block;
+  width: 100%;
+  max-height: 440px;
+  background: #000;
+  object-fit: contain;
+}
+.video-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: #0d0f12;
+  border-top: 1px solid var(--border);
+}
+.video-hd-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.video-hd-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.gif-pill {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  pointer-events: none;
+}
+.link-card {
+  display: block;
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text);
+}
+.link-card-img {
+  width: 100%;
+  max-height: 200px;
+  object-fit: cover;
+  display: block;
+  border-bottom: 1px solid var(--border);
+}
+.link-card-body { padding: 10px 12px; }
+.link-card-domain { font-size: 12px; color: var(--text-muted); margin-bottom: 2px; }
+.link-card-title { font-size: 14px; font-weight: 700; line-height: 1.3; margin-bottom: 3px; }
+.link-card-desc { font-size: 13px; color: var(--text-muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.poll-box {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.poll-row {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  padding: 7px 10px;
+  margin-bottom: 6px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+.poll-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: rgba(29, 155, 240, 0.22);
+  pointer-events: none;
+}
+.poll-label, .poll-pct { position: relative; z-index: 1; }
+.poll-pct { font-weight: 700; color: var(--text-muted); }
+.poll-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+/* Fullscreen lightbox */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(0, 0, 0, 0.96);
+  display: none;
+  flex-direction: column;
+}
+.lightbox.open { display: flex; }
+.lightbox-bar {
+  height: 48px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #fff;
+  font-size: 14px;
+}
+.lightbox-stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  position: relative;
+}
+.lightbox-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  transition: transform 0.15s ease;
+}
+.lightbox-img.zoomed {
+  max-width: none;
+  max-height: none;
+  transform: scale(1.8);
+  transform-origin: center;
+}
+.lightbox-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 50%;
+  width: 38px;
+  height: 38px;
+  font-size: 20px;
+  cursor: pointer;
+}
+.lightbox-cap {
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #d1d5db;
+  border-top: 1px solid #222;
+  max-height: 90px;
+  overflow-y: auto;
+}
+/* Profile & Notifications */
+.profile-banner { width: 100%; height: 130px; background: #16181c; object-fit: cover; display: block; }
+.profile-card { padding: 0 16px 14px; border-bottom: 1px solid var(--border); }
+.profile-top { display: flex; justify-content: space-between; align-items: flex-end; margin-top: -32px; margin-bottom: 10px; }
+.profile-avatar { width: 68px; height: 68px; font-size: 24px; border: 3px solid #000; }
+.profile-stats { display: flex; gap: 16px; margin-top: 10px; font-size: 13px; color: var(--text-muted); }
+.profile-stats strong { color: var(--text); }
+.notif-row { padding: 12px 16px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; gap: 10px; }
+.notif-icon { font-size: 16px; width: 22px; flex-shrink: 0; text-align: center; padding-top: 2px; }
 </style>
 </head>
 <body>
 
 <div class="header">
-    <div class="header-logo">
+    <div class="header-logo" onclick="nav('feed')" style="cursor:pointer;">
         <svg viewBox="0 0 64 64" role="img" aria-label="X Lite logo" xmlns="http://www.w3.org/2000/svg">
             <rect width="64" height="64" rx="14" fill="#000"/>
             <path d="M14 13h9l30 39h-9z" fill="#f7f9fa"/>
@@ -430,6 +666,24 @@ a { color: var(--accent); text-decoration: none; }
         </svg>
         <span class="header-sub">Lite</span>
     </div>
+    <div class="header-actions" id="headerActions" style="display:none;">
+        <button type="button" class="header-btn" id="hdrNotifBtn" onclick="nav('notifications')" title="Notifications" aria-label="Notifications">🔔 Alerts</button>
+        <button type="button" class="header-btn" id="hdrProfileBtn" onclick="openOwnProfile()" title="Profile" aria-label="Profile">👤</button>
+    </div>
+</div>
+
+<div id="mediaLightbox" class="lightbox" onclick="closeLightbox(event)">
+    <div class="lightbox-bar" onclick="event.stopPropagation()">
+        <button type="button" class="back-btn" onclick="closeLightbox()" aria-label="Close">&times;</button>
+        <span id="lightboxCounter"></span>
+        <button type="button" class="header-btn" id="lightboxZoomBtn" onclick="toggleLightboxZoom(event)">Zoom</button>
+    </div>
+    <div class="lightbox-stage" onclick="event.stopPropagation()">
+        <button type="button" class="lightbox-nav" id="lightboxPrev" style="left:10px;" onclick="stepLightbox(-1, event)">&#8249;</button>
+        <img id="lightboxImg" class="lightbox-img" alt="" onclick="toggleLightboxZoom(event)" />
+        <button type="button" class="lightbox-nav" id="lightboxNext" style="right:10px;" onclick="stepLightbox(1, event)">&#8250;</button>
+    </div>
+    <div id="lightboxCaption" class="lightbox-cap" style="display:none;" onclick="event.stopPropagation()"></div>
 </div>
 
 <div id="tabNav" class="nav-tabs">
@@ -453,7 +707,7 @@ a { color: var(--accent); text-decoration: none; }
         <span class="bottom-icon">⚲</span>
         <span>Search</span>
     </div>
-    <div class="bottom-item" onclick="nav('post')">
+    <div class="bottom-item" onclick="composeQuoteTweetId=null;nav('post')">
         <span class="bottom-icon">✎</span>
         <span>Post</span>
     </div>
@@ -1350,7 +1604,7 @@ let currentTab = 'following';
 let currentFeedOrigin = 'following';
 let cursors = { following: null, foryou: null };
 let usedFeedCursors = { following: new Set(), foryou: new Set() };
-let appConfig = { auth_token: '', ct0: '', image_mode: 'tap', avatar_mode: 'mini', hide_ads: true };
+let appConfig = { auth_token: '', ct0: '', image_mode: 'tap', avatar_mode: 'mini', hide_ads: true, sync_seen: true };
 let currentTweetsList = [];
 let allTweetsMap = {};
 let bookmarksCache = null;
@@ -1358,14 +1612,17 @@ let isFetching = false;
 let pendingCallbacks = {};
 const pendingActionLocks = {};
 const activeImageLoads = new Set();
-const APP_VERSION = '1.0.21';
-const APP_BUILD = '2026.11.13.6';
-const LATEST_APK_VERSION = '1.0.18';
+const APP_VERSION = '1.0.22';
+const APP_BUILD = '2026.11.13.7';
+const LATEST_APK_VERSION = '1.0.22';
 const LATEST_APK_URL = 'https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk';
 let activeApkDownloadState = null;
 try { if (typeof history !== 'undefined' && 'scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch (e) {}
 const FEED_REFRESH_MS = 5 * 60 * 1000;
 const FEED_PAGE_SIZE = 6;
+const FEED_RICH_PAGE_SIZE = 20;
+const VIEWER_KEY = 'xlite_viewer_v1';
+const SEEN_FORYOU_KEY = 'xlite_seen_foryou_v1';
 let currentView = 'feed';
 let viewGeneration = 0;
 let lastSearchQuery = '';
@@ -1379,6 +1636,25 @@ let savedFeedNodes = null;
 let savedFeedScrollY = 0;
 let savedFeedTab = '';
 let savedFeedRequestInterrupted = false;
+let viewerIdentity = null;
+let profileState = null;
+let savedProfileMarkup = '';
+let savedProfileScrollY = 0;
+let notifState = null;
+let savedNotifMarkup = '';
+let savedNotifScrollY = 0;
+let composeQuoteTweetId = null;
+let lightboxState = null;
+let seenForYouIds = new Set();
+let pendingSeenTweetIds = [];
+const pendingSeenSet = new Set();
+let seenLingerEvents = [];
+const seenLingerQueued = new Set();
+const seenDwellTimers = new Map();
+let seenFlushTimer = null;
+let seenTweetObserver = null;
+let videoAutoPauseObserver = null;
+let feedAutoLoaderObserver = null;
 let imageRequestSequence = 0;
 const imageRequestNonce = Date.now().toString(36);
 let searchTransactionClient = null;
@@ -1390,13 +1666,14 @@ const TIMELINE_CONFIG = {
     following: {
         queryId: '2ee46L1AFXmnTa0EvUog-Q',
         op: 'HomeLatestTimeline',
-        buildVariables: (count, cursor) => {
+        buildVariables: (count, cursor, seenTweetIds) => {
             let v = {
                 count: count || FEED_PAGE_SIZE,
                 includePromotedContent: false,
                 latestControlAvailable: true,
                 requestContext: 'launch'
             };
+            if (Array.isArray(seenTweetIds) && seenTweetIds.length) v.seenTweetIds = seenTweetIds;
             if (cursor) v.cursor = cursor;
             return v;
         }
@@ -1405,12 +1682,12 @@ const TIMELINE_CONFIG = {
         queryId: 'KmJCeZ__ef1fNos7tKN_fg',
         fallbackQueryId: 'fedFLLzmiCAuzPgA8lyh8Q',
         op: 'HomeTimeline',
-        buildVariables: (count, cursor) => {
+        buildVariables: (count, cursor, seenTweetIds) => {
             let v = {
                 count: count || FEED_PAGE_SIZE,
                 includePromotedContent: false,
                 requestContext: 'launch',
-                seenTweetIds: [],
+                seenTweetIds: Array.isArray(seenTweetIds) ? seenTweetIds : [],
                 withCommunity: true
             };
             if (cursor) v.cursor = cursor;
@@ -1538,6 +1815,282 @@ function shouldHideAds() {
     return appConfig.hide_ads !== false;
 }
 
+function readSavedSyncSeen() {
+    const pref = readCachePref('pref_sync_seen', 'xlite_sync_seen');
+    return pref !== 'false' && pref !== 'off';
+}
+
+function saveSyncSeenPref(sync) {
+    const enabled = sync !== false && sync !== 'false' && sync !== 'off';
+    writeCachePref('pref_sync_seen', 'xlite_sync_seen', enabled ? 'true' : 'false');
+    return enabled;
+}
+
+function shouldSyncSeen() {
+    return appConfig.sync_seen !== false;
+}
+
+function getFeedPageSize() {
+    return appConfig.image_mode === 'auto' ? FEED_RICH_PAGE_SIZE : FEED_PAGE_SIZE;
+}
+
+function supportsRichModeNative() {
+    return !window.AndroidBridge || typeof AndroidBridge.takeTempResult === 'function';
+}
+
+function supportsSignedPostTimelines() {
+    return !!(window.AndroidBridge && typeof AndroidBridge.executeFormPostWithTransactionAsync === 'function' && typeof AndroidBridge.executePostWithTransactionAsync === 'function');
+}
+
+function formatCount(n) {
+    const num = Number(n);
+    if (!Number.isFinite(num) || num <= 0) return '0';
+    if (num < 1000) return String(Math.round(num));
+    if (num < 1000000) return (num / 1000).toFixed(num < 100000 ? 1 : 0).replace(/\.0$/, '') + 'K';
+    return (num / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+}
+
+function formatRelativeTime(dateInput) {
+    if (!dateInput) return '';
+    const d = dateInput instanceof Date ? dateInput : new Date(dateInput);
+    const ms = d.getTime();
+    if (!Number.isFinite(ms)) return '';
+    const diffSec = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+    if (diffSec < 60) return 'now';
+    if (diffSec < 3600) return Math.floor(diffSec / 60) + 'm';
+    if (diffSec < 86400) return Math.floor(diffSec / 3600) + 'h';
+    if (diffSec < 7 * 86400) return Math.floor(diffSec / 86400) + 'd';
+    try { return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); } catch (_) { return ''; }
+}
+
+function loadViewerIdentity() {
+    try {
+        const raw = localStorage.getItem(VIEWER_KEY);
+        const parsed = raw ? JSON.parse(raw) : null;
+        if (parsed && (parsed.screen_name || parsed.id)) viewerIdentity = parsed;
+    } catch (_) {}
+    return viewerIdentity;
+}
+
+function saveViewerIdentity(identity) {
+    if (!identity || (!identity.screen_name && !identity.id)) return viewerIdentity;
+    viewerIdentity = {
+        id: String(identity.id || viewerIdentity?.id || ''),
+        screen_name: String(identity.screen_name || viewerIdentity?.screen_name || ''),
+        name: String(identity.name || viewerIdentity?.name || '')
+    };
+    try { localStorage.setItem(VIEWER_KEY, JSON.stringify(viewerIdentity)); } catch (_) {}
+    updateHeaderActions();
+    return viewerIdentity;
+}
+
+function extractViewerFromHomeHtml(html) {
+    if (!html || typeof html !== 'string') return null;
+    const uidMatch = html.match(/"(?:viewerId|user_id)":"(\d{3,25})"/);
+    const uid = uidMatch ? uidMatch[1] : '';
+    if (uid) {
+        const idNeedle = '"id_str":"' + uid + '"';
+        let idx = html.indexOf(idNeedle);
+        if (idx === -1) idx = html.indexOf('"rest_id":"' + uid + '"');
+        if (idx !== -1) {
+            const slice = html.slice(Math.max(0, idx - 500), Math.min(html.length, idx + 800));
+            const sn = slice.match(/"screen_name":"([A-Za-z0-9_]{1,30})"/);
+            const nm = slice.match(/"name":"([^"\\]{1,80})"/);
+            if (sn) return saveViewerIdentity({ id: uid, screen_name: sn[1], name: nm ? nm[1] : sn[1] });
+        }
+    }
+    const pair = html.match(/"id_str":"(\d{3,25})"[^}]{0,260}"screen_name":"([A-Za-z0-9_]{1,30})"/)
+        || html.match(/"screen_name":"([A-Za-z0-9_]{1,30})"[^}]{0,260}"id_str":"(\d{3,25})"/);
+    if (pair) {
+        const isNumFirst = /^\d+$/.test(pair[1]);
+        return saveViewerIdentity({ id: isNumFirst ? pair[1] : pair[2], screen_name: isNumFirst ? pair[2] : pair[1], name: '' });
+    }
+    return null;
+}
+
+function updateHeaderActions() {
+    const actions = document.getElementById('headerActions');
+    if (actions) actions.style.display = (appConfig.auth_token && appConfig.ct0) ? 'flex' : 'none';
+    const notifBtn = document.getElementById('hdrNotifBtn');
+    const profBtn = document.getElementById('hdrProfileBtn');
+    if (notifBtn) notifBtn.classList.toggle('active', currentView === 'notifications');
+    if (profBtn) {
+        profBtn.classList.toggle('active', currentView === 'profile' && viewerIdentity?.screen_name && profileState?.screenName?.toLowerCase() === viewerIdentity.screen_name.toLowerCase());
+        profBtn.title = viewerIdentity?.screen_name ? '@' + viewerIdentity.screen_name : 'Profile';
+    }
+}
+
+function loadSeenForYouIds() {
+    try {
+        const raw = localStorage.getItem(SEEN_FORYOU_KEY);
+        const arr = raw ? JSON.parse(raw) : [];
+        if (Array.isArray(arr)) seenForYouIds = new Set(arr.slice(-800).map(String));
+    } catch (_) { seenForYouIds = new Set(); }
+}
+
+function saveSeenForYouIds() {
+    try {
+        const list = Array.from(seenForYouIds).slice(-800);
+        if (seenForYouIds.size > 800) seenForYouIds = new Set(list);
+        localStorage.setItem(SEEN_FORYOU_KEY, JSON.stringify(list));
+    } catch (_) {}
+}
+
+let seenSaveDebounce = null;
+function scheduleSaveSeenIds() {
+    if (seenSaveDebounce) return;
+    seenSaveDebounce = setTimeout(() => {
+        seenSaveDebounce = null;
+        saveSeenForYouIds();
+    }, 1500);
+}
+
+function markTweetSeen(twId, sectionName, dwellMs) {
+    const idStr = String(twId || '');
+    if (!idStr || !/^\d+$/.test(idStr)) return;
+    seenForYouIds.add(idStr);
+    scheduleSaveSeenIds();
+    if (!shouldSyncSeen()) return;
+    if (!pendingSeenSet.has(idStr)) {
+        pendingSeenSet.add(idStr);
+        pendingSeenTweetIds.push(idStr);
+        if (pendingSeenTweetIds.length > 1500) pendingSeenTweetIds.shift();
+    }
+    if (!seenLingerQueued.has(idStr)) {
+        seenLingerQueued.add(idStr);
+        const now = Date.now();
+        const dwell = Math.max(450, Math.min(30000, Number(dwellMs) || 500));
+        seenLingerEvents.push({
+            _category_: 'client_event',
+            format_version: 2,
+            triggered_on: now,
+            event_namespace: {
+                page: 'home',
+                section: sectionName || (currentTab === 'foryou' ? 'home' : 'latest'),
+                component: 'tweet',
+                element: 'linger',
+                action: 'results'
+            },
+            items: [{
+                item_type: 0,
+                id: idStr,
+                impression_details: {
+                    visibility_start: now - dwell,
+                    visibility_end: now,
+                    percent_screen_height_100k: 50000
+                }
+            }]
+        });
+        if (seenLingerEvents.length >= 12) {
+            flushSeenLinger(false);
+        } else if (!seenFlushTimer) {
+            seenFlushTimer = setTimeout(() => {
+                seenFlushTimer = null;
+                flushSeenLinger(false);
+            }, 5000);
+        }
+    }
+}
+
+function consumePendingSeenBatch(limit = 100) {
+    if (!shouldSyncSeen() || !pendingSeenTweetIds.length) return [];
+    return pendingSeenTweetIds.splice(0, limit);
+}
+
+function requeueSeenBatch(ids) {
+    if (!Array.isArray(ids) || !ids.length) return;
+    pendingSeenTweetIds = ids.concat(pendingSeenTweetIds).slice(0, 1500);
+}
+
+function flushSeenLinger(force = false) {
+    if (seenFlushTimer) {
+        clearTimeout(seenFlushTimer);
+        seenFlushTimer = null;
+    }
+    if (!seenLingerEvents.length || !shouldSyncSeen() || !supportsSignedPostTimelines()) return;
+    if (!appConfig.auth_token || !appConfig.ct0) return;
+    if (!force && seenLingerEvents.length === 0) return;
+    const batch = seenLingerEvents.splice(0, 40);
+    const body = 'category=client_event&log=' + encodeURIComponent(JSON.stringify(batch));
+    performSignedFormPost('/i/api/1.1/jot/client_event.json', body, (resStr) => {
+        try {
+            const parsed = JSON.parse(resStr);
+            if (parsed && parsed.error && parsed.status !== 200) {
+                seenLingerEvents = batch.concat(seenLingerEvents).slice(0, 200);
+            }
+        } catch (_) {}
+    });
+}
+
+function disconnectSeenObserver() {
+    if (seenTweetObserver) {
+        try { seenTweetObserver.disconnect(); } catch (_) {}
+        seenTweetObserver = null;
+    }
+    for (const timer of seenDwellTimers.values()) clearTimeout(timer);
+    seenDwellTimers.clear();
+}
+
+function initSeenObserver(rootEl) {
+    disconnectSeenObserver();
+    if (typeof IntersectionObserver !== 'function') return;
+    const container = rootEl || document.getElementById('feedContainer') || document.getElementById('mainContent');
+    if (!container) return;
+    const sectionName = currentTab === 'foryou' ? 'home' : 'latest';
+    seenTweetObserver = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+            const twId = entry.target?.dataset?.id;
+            if (!twId) return;
+            if (entry.isIntersecting && entry.intersectionRatio >= 0.35) {
+                if (!seenDwellTimers.has(twId)) {
+                    const start = Date.now();
+                    const timer = setTimeout(() => {
+                        seenDwellTimers.delete(twId);
+                        markTweetSeen(twId, sectionName, Date.now() - start);
+                        if (seenTweetObserver) try { seenTweetObserver.unobserve(entry.target); } catch (_) {}
+                    }, 450);
+                    seenDwellTimers.set(twId, timer);
+                }
+            } else if (seenDwellTimers.has(twId)) {
+                clearTimeout(seenDwellTimers.get(twId));
+                seenDwellTimers.delete(twId);
+            }
+        });
+    }, { threshold: [0.35] });
+    container.querySelectorAll('.tweet[data-id]').forEach((el) => {
+        if (/^\d+$/.test(el.dataset.id)) seenTweetObserver.observe(el);
+    });
+}
+
+function pauseAllFeedVideos() {
+    try {
+        document.querySelectorAll('video.tweet-video').forEach((v) => { try { v.pause(); } catch (_) {} });
+    } catch (_) {}
+}
+
+function initVideoAutoPauseObserver(rootEl) {
+    if (videoAutoPauseObserver) {
+        try { videoAutoPauseObserver.disconnect(); } catch (_) {}
+        videoAutoPauseObserver = null;
+    }
+    if (typeof IntersectionObserver !== 'function') return;
+    const container = rootEl || document.getElementById('mainContent');
+    if (!container) return;
+    const videos = container.querySelectorAll('video.tweet-video');
+    if (!videos.length) return;
+    videoAutoPauseObserver = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+            const vid = entry.target;
+            if (!entry.isIntersecting) {
+                try { vid.pause(); } catch (_) {}
+            } else if (vid.dataset.autoplay === '1' && appConfig.image_mode === 'auto') {
+                try { const p = vid.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {}
+            }
+        });
+    }, { threshold: [0.15] });
+    videos.forEach((v) => videoAutoPauseObserver.observe(v));
+}
+
 function init() {
     if (window.AndroidBridge) {
         try {
@@ -1548,6 +2101,25 @@ function init() {
     }
     appConfig.avatar_mode = readSavedAvatarMode();
     appConfig.hide_ads = readSavedHideAds();
+    appConfig.sync_seen = readSavedSyncSeen();
+    loadViewerIdentity();
+    loadSeenForYouIds();
+    updateHeaderActions();
+    if (typeof document !== 'undefined' && document.addEventListener) {
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                saveSeenForYouIds();
+                flushSeenLinger(true);
+                pauseAllFeedVideos();
+            }
+        });
+    }
+    if (typeof window !== 'undefined' && window.addEventListener) {
+        window.addEventListener('pagehide', () => {
+            saveSeenForYouIds();
+            flushSeenLinger(true);
+        });
+    }
     try {
         let saved = localStorage.getItem('last_active_tab');
         if (saved && ['following', 'foryou', 'cache'].includes(saved)) {
@@ -1563,6 +2135,7 @@ function init() {
         nav('settings');
     } else {
         loadFeed(currentTab);
+        setTimeout(() => { if (!searchTransactionClient) prepareXTransaction(() => {}); }, 350);
     }
 }
 
@@ -1572,6 +2145,8 @@ window.__onAsyncFinish = function(callbackId, directResult) {
         let resStr = '';
         if (directResult !== undefined) {
             resStr = directResult;
+        } else if (window.AndroidBridge && typeof AndroidBridge.takeTempResult === 'function') {
+            resStr = AndroidBridge.takeTempResult(callbackId);
         } else if (window.AndroidBridge && AndroidBridge.getCache) {
             resStr = AndroidBridge.getCache('temp_res_' + callbackId);
             AndroidBridge.saveCache('temp_res_' + callbackId, '');
@@ -1592,8 +2167,11 @@ function performAsyncGet(url, callback, transactionId) {
 
     try {
         if (transactionId) {
-            if (window.AndroidBridge && typeof AndroidBridge.executeSearchGetAsync === 'function') {
-                AndroidBridge.executeSearchGetAsync(url, transactionId, cbId);
+            const signedFn = window.AndroidBridge && (typeof AndroidBridge.executeSignedGetAsync === 'function'
+                ? AndroidBridge.executeSignedGetAsync
+                : (typeof AndroidBridge.executeSearchGetAsync === 'function' ? AndroidBridge.executeSearchGetAsync : null));
+            if (signedFn) {
+                signedFn.call(AndroidBridge, url, transactionId, cbId);
             } else {
                 window.__onAsyncFinish(cbId, JSON.stringify({ error: true, message: 'Install the v1.0.6 APK to enable search.' }));
             }
@@ -1617,6 +2195,29 @@ function performAsyncGet(url, callback, transactionId) {
     } catch (error) {
         window.__onAsyncFinish(cbId, JSON.stringify({ error: true, message: error.message || 'Request failed' }));
     }
+}
+
+function performSignedGet(path, callback) {
+    const url = 'https://x.com' + path;
+    const signPath = path.split('?')[0];
+    if (window.AndroidBridge && (typeof AndroidBridge.executeSignedGetAsync === 'function' || typeof AndroidBridge.executeSearchGetAsync === 'function')) {
+        prepareXTransaction((prepErr) => {
+            if (prepErr) {
+                callback(JSON.stringify({ error: true, message: prepErr }));
+                return;
+            }
+            let tid = '';
+            try {
+                tid = searchTransactionClient.generateTransactionId('GET', signPath);
+            } catch (e) {
+                callback(JSON.stringify({ error: true, message: 'Could not sign X request. Please try again.' }));
+                return;
+            }
+            performAsyncGet(url, callback, tid);
+        });
+        return;
+    }
+    performAsyncGet(url, callback);
 }
 
 function performAsyncPost(url, payload, callback) {
@@ -1651,7 +2252,7 @@ function performSignedPost(path, payload, callback) {
             }
             let tid = '';
             try {
-                tid = searchTransactionClient.generateTransactionId('POST', path);
+                tid = searchTransactionClient.generateTransactionId('POST', path.split('?')[0]);
             } catch (e) {
                 callback(JSON.stringify({ error: true, message: 'Could not sign X request. Please try again.' }));
                 return;
@@ -1672,6 +2273,35 @@ function performSignedPost(path, payload, callback) {
         return;
     }
     performAsyncPost(url, payload, callback);
+}
+
+function performSignedFormPost(path, formBody, callback) {
+    const url = 'https://x.com' + path;
+    if (!window.AndroidBridge || typeof AndroidBridge.executeFormPostWithTransactionAsync !== 'function') {
+        callback(JSON.stringify({ error: true, message: 'Update to v1.0.22 APK to use this feature.' }));
+        return;
+    }
+    prepareXTransaction((prepErr) => {
+        if (prepErr) {
+            callback(JSON.stringify({ error: true, message: prepErr }));
+            return;
+        }
+        let tid = '';
+        try {
+            tid = searchTransactionClient.generateTransactionId('POST', path.split('?')[0]);
+        } catch (e) {
+            callback(JSON.stringify({ error: true, message: 'Could not sign X request. Please try again.' }));
+            return;
+        }
+        const cbId = 'fpost_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
+        pendingCallbacks[cbId] = callback;
+        try {
+            AndroidBridge.executeFormPostWithTransactionAsync(url, formBody, tid, cbId);
+        } catch (err) {
+            delete pendingCallbacks[cbId];
+            callback(JSON.stringify({ error: true, message: err.message || 'Post failed' }));
+        }
+    });
 }
 
 function parsePostResponse(resStr, op) {
@@ -1740,18 +2370,36 @@ function showStatus(text, isError, autoHideMs) {
     }
 }
 
+function disconnectFeedAutoLoader() {
+    if (feedAutoLoaderObserver) {
+        try { feedAutoLoaderObserver.disconnect(); } catch (_) {}
+        feedAutoLoaderObserver = null;
+    }
+}
+
 function nav(view) {
+    if (typeof closeLightbox === 'function' && lightboxState) closeLightbox();
     const returningFromThread = currentView === 'thread' && threadOriginView === 'feed';
+    const returningProfile = currentView === 'thread' && threadOriginView === 'profile';
+    const returningNotif = currentView === 'thread' && threadOriginView === 'notifications';
     if (currentView === 'thread' && view !== 'feed') {
         savedFeedMarkup = '';
         savedFeedNodes = null;
     }
+    if (view !== 'post') composeQuoteTweetId = null;
+    if (view !== 'feed') {
+        disconnectSeenObserver();
+        disconnectFeedAutoLoader();
+        pauseAllFeedVideos();
+    }
     activeThreadTweetId = null;
     currentView = view;
     viewGeneration++;
+    const bottomTabs = ['feed', 'search', 'post', 'settings'];
     document.querySelectorAll('.bottom-item').forEach((el, idx) => {
-        el.classList.toggle('active', ['feed', 'search', 'post', 'settings'][idx] === view);
+        el.classList.toggle('active', bottomTabs[idx] === view);
     });
+    updateHeaderActions();
 
     const tabNav = document.getElementById('tabNav');
     tabNav.style.display = (view === 'feed') ? 'flex' : 'none';
@@ -1763,6 +2411,8 @@ function nav(view) {
         if (view === 'search') renderSearch();
         else if (view === 'post') renderPost();
         else if (view === 'settings') renderSettings();
+        else if (view === 'notifications') renderNotifications(returningNotif);
+        else if (view === 'profile') renderProfileView(returningProfile);
     }
 }
 
@@ -1772,6 +2422,9 @@ function switchFeed(tab) {
     activeThreadTweetId = null;
     currentView = 'feed';
     viewGeneration++;
+    disconnectSeenObserver();
+    disconnectFeedAutoLoader();
+    pauseAllFeedVideos();
     currentTab = tab;
     currentTweetsList = [];
     currentFeedOrigin = tab;
@@ -1779,6 +2432,7 @@ function switchFeed(tab) {
     document.querySelectorAll('.nav-tab').forEach((el, idx) => {
         el.classList.toggle('active', ['following', 'foryou', 'cache'][idx] === tab);
     });
+    updateHeaderActions();
     loadFeed(tab);
 }
 
@@ -1808,8 +2462,11 @@ function linkify(text) {
         const token = match[0];
         if (token.startsWith('http')) {
             result += `<a href="${escapeHtml(token)}" onclick="event.stopPropagation()">${escapeHtml(token)}</a>`;
+        } else if (token[0] === '@') {
+            const handle = escapeHtml(token.slice(1));
+            result += `<a href="javascript:openProfile('${handle}')" onclick="event.stopPropagation()">${escapeHtml(token)}</a>`;
         } else {
-            const query = token[0] === '@' ? 'from:' + token.slice(1) : token;
+            const query = escapeHtml(token);
             result += `<a href="javascript:searchTag('${query}')" onclick="event.stopPropagation()">${escapeHtml(token)}</a>`;
         }
         offset = match.index + token.length;
@@ -1882,17 +2539,17 @@ function syncTweetActionDom(root, twId, tw) {
     const liked = !!tw?.liked;
     const retweeted = !!tw?.retweeted;
     setTweetActionElements(root, 'data-reply-id', twId, el => {
-        if (tw) el.textContent = '💬 ' + (tw.replies || 0);
+        if (tw) el.textContent = '💬 ' + formatCount(tw.replies || 0);
     });
     setTweetActionElements(root, 'data-rt-id', twId, el => {
-        if (tw) el.textContent = '⇄ ' + (tw.retweets || 0);
+        if (tw) el.textContent = '⇄ ' + formatCount(tw.retweets || 0);
         if (el.classList) {
             el.classList.toggle('retweeted', retweeted);
             el.classList.toggle('busy', !!pendingActionLocks['rt:' + twId]);
         }
     });
     setTweetActionElements(root, 'data-like-id', twId, el => {
-        if (tw) el.textContent = (liked ? '♥ ' : '♡ ') + (tw.likes || 0);
+        if (tw) el.textContent = (liked ? '♥ ' : '♡ ') + formatCount(tw.likes || 0);
         if (el.classList) {
             el.classList.toggle('liked', liked);
             el.classList.toggle('busy', !!pendingActionLocks['like:' + twId]);
@@ -1943,6 +2600,7 @@ function syncVisibleTweetActions() {
 function toggleLike(twId, event) {
     if (event && event.stopPropagation) event.stopPropagation();
     const key = String(twId || '');
+    markTweetSeen(key);
     const tw = findTweetById(key);
     if (!tw) return;
     const lockKey = 'like:' + key;
@@ -1974,6 +2632,7 @@ function toggleLike(twId, event) {
 function toggleRetweet(twId, event) {
     if (event && event.stopPropagation) event.stopPropagation();
     const key = String(twId || '');
+    markTweetSeen(key);
     const tw = findTweetById(key);
     if (!tw) return;
     const lockKey = 'rt:' + key;
@@ -2009,6 +2668,7 @@ function toggleRetweet(twId, event) {
 function commentTweet(twId, event) {
     if (event && event.stopPropagation) event.stopPropagation();
     const key = String(twId || '');
+    markTweetSeen(key);
     if (currentView === 'thread' && activeThreadTweetId === key) {
         const replyInput = document.getElementById('replyText');
         if (replyInput) {
@@ -2018,6 +2678,14 @@ function commentTweet(twId, event) {
         }
     }
     viewThread(key, true);
+}
+
+function openQuoteComposer(twId, event) {
+    if (event && event.stopPropagation) event.stopPropagation();
+    const key = String(twId || '');
+    markTweetSeen(key);
+    composeQuoteTweetId = key;
+    nav('post');
 }
 
 function toggleBookmark(twId, event) {
@@ -2250,7 +2918,7 @@ function renderAvatarHtml(tw, sizeClass = '') {
     const initial = escapeHtml((label[0] || 'X').toUpperCase());
     const srcUrl = avatarVariantUrl(tw.user_avatar, getEffectiveAvatarMode());
     const clickAttr = (!sizeClass && tw.user_screen_name)
-        ? ` onclick="searchTag('from:${escapeHtml(tw.user_screen_name)}'); event.stopPropagation();"`
+        ? ` onclick="openProfile('${escapeHtml(tw.user_screen_name)}'); event.stopPropagation();"`
         : '';
     const imgTag = srcUrl
         ? `<img class="tweet-avatar-img" src="${localImageUrl(srcUrl, 'thumb')}" alt="" loading="lazy" decoding="async" onload="this.style.opacity='1'" onerror="this.remove()" />`
@@ -2258,54 +2926,233 @@ function renderAvatarHtml(tw, sizeClass = '') {
     return `<span class="tweet-avatar${sizeClass ? ' ' + sizeClass : ''}"${clickAttr}><span>${initial}</span>${imgTag}</span>`;
 }
 
+function renderLightboxFrame() {
+    if (!lightboxState || !lightboxState.photos.length) return;
+    const item = lightboxState.photos[lightboxState.index];
+    const img = document.getElementById('lightboxImg');
+    const counter = document.getElementById('lightboxCounter');
+    const zoomBtn = document.getElementById('lightboxZoomBtn');
+    const prev = document.getElementById('lightboxPrev');
+    const next = document.getElementById('lightboxNext');
+    const cap = document.getElementById('lightboxCaption');
+    if (img) {
+        img.classList.toggle('zoomed', !!lightboxState.zoomed);
+        img.src = localImageUrl(mediaHdUrl(item.url), 'hd');
+        img.alt = item.alt_text || '';
+    }
+    if (counter) counter.textContent = (lightboxState.index + 1) + ' / ' + lightboxState.photos.length;
+    if (zoomBtn) zoomBtn.textContent = lightboxState.zoomed ? 'Fit' : 'Zoom';
+    if (prev) prev.style.display = lightboxState.photos.length > 1 ? 'block' : 'none';
+    if (next) next.style.display = lightboxState.photos.length > 1 ? 'block' : 'none';
+    if (cap) {
+        if (item.alt_text) {
+            cap.textContent = item.alt_text;
+            cap.style.display = 'block';
+        } else {
+            cap.textContent = '';
+            cap.style.display = 'none';
+        }
+    }
+}
+
+function openLightbox(twId, idx, event) {
+    if (event && event.stopPropagation) event.stopPropagation();
+    const tw = findTweetById(twId);
+    const photos = (tw?.media || []).filter(m => m && m.type !== 'video' && m.type !== 'animated_gif' && m.url);
+    if (!photos.length) return;
+    lightboxState = {
+        photos,
+        index: Math.max(0, Math.min(photos.length - 1, Number(idx) || 0)),
+        zoomed: false
+    };
+    const modal = document.getElementById('mediaLightbox');
+    if (modal) modal.classList.add('open');
+    renderLightboxFrame();
+}
+
+function stepLightbox(delta, event) {
+    if (event && event.stopPropagation) event.stopPropagation();
+    if (!lightboxState || !lightboxState.photos.length) return;
+    const len = lightboxState.photos.length;
+    lightboxState.index = (lightboxState.index + delta + len) % len;
+    lightboxState.zoomed = false;
+    renderLightboxFrame();
+}
+
+function toggleLightboxZoom(event) {
+    if (event && event.stopPropagation) event.stopPropagation();
+    if (!lightboxState) return;
+    lightboxState.zoomed = !lightboxState.zoomed;
+    renderLightboxFrame();
+}
+
+function closeLightbox(event) {
+    if (event && event.stopPropagation) event.stopPropagation();
+    lightboxState = null;
+    const modal = document.getElementById('mediaLightbox');
+    const img = document.getElementById('lightboxImg');
+    if (modal) modal.classList.remove('open');
+    if (img) {
+        img.classList.remove('zoomed');
+        img.removeAttribute('src');
+    }
+}
+
+if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('keydown', (e) => {
+        if (!lightboxState) return;
+        if (e.key === 'Escape') closeLightbox();
+        else if (e.key === 'ArrowLeft') stepLightbox(-1);
+        else if (e.key === 'ArrowRight') stepLightbox(1);
+    });
+}
+
+function switchVideoHd(btn, videoId, event) {
+    if (event && event.stopPropagation) event.stopPropagation();
+    const vid = document.getElementById(videoId);
+    const hdSrc = btn?.dataset?.hdSrc;
+    if (!vid || !hdSrc) return;
+    const curTime = vid.currentTime || 0;
+    const wasPaused = vid.paused;
+    vid.src = hdSrc;
+    const onReady = () => {
+        try { if (curTime > 0) vid.currentTime = curTime; } catch (_) {}
+        if (!wasPaused) { try { const p = vid.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {} }
+    };
+    if (typeof vid.addEventListener === 'function') vid.addEventListener('loadedmetadata', onReady, { once: true });
+    btn.textContent = 'HD ✓';
+    btn.classList.add('active');
+    btn.disabled = true;
+}
+
+function renderMediaHtml(tw) {
+    if (!tw.media || tw.media.length === 0) return '';
+    let out = '<div style="margin-top:8px;" onclick="event.stopPropagation()">';
+    if (appConfig.image_mode === 'auto') {
+        const photos = [];
+        const videos = [];
+        tw.media.forEach(m => {
+            if (m && (m.type === 'video' || m.type === 'animated_gif')) videos.push(m);
+            else if (m && m.url) photos.push(m);
+        });
+        if (photos.length > 0) {
+            const imgMode = supportsRichModeNative() ? 'rich' : 'hd';
+            const gridCount = Math.min(4, photos.length);
+            out += `<div class="media-grid media-grid-${gridCount}">`;
+            photos.slice(0, 4).forEach((m, idx) => {
+                const imgId = 'img_' + Math.random().toString(36).substr(2, 9);
+                const previewUrl = mediaPreviewUrl(m.url, false);
+                out += `
+                <div class="media-cell-${idx}">
+                    <img id="${imgId}" src="${localImageUrl(previewUrl, imgMode)}" class="tweet-img" loading="lazy" decoding="async" data-preview-url="${escapeHtml(previewUrl)}" data-original-url="${escapeHtml(m.url)}" onclick="openLightbox('${escapeHtml(tw.id)}', ${idx}, event)" onerror="retryOriginalPreview(this)" />
+                </div>`;
+            });
+            out += '</div>';
+            const firstAlt = photos.find(p => p.alt_text)?.alt_text;
+            if (firstAlt) out += `<div style="font-size:12px; color:var(--text-muted); margin-top:5px;">${escapeHtml(firstAlt)}</div>`;
+        }
+        videos.forEach(m => {
+            const vidId = 'vid_' + Math.random().toString(36).substr(2, 9);
+            const posterSrc = localImageUrl(mediaPreviewUrl(m.url, true), 'thumb');
+            const isGif = m.type === 'animated_gif';
+            const durText = !isGif && m.duration_ms ? Math.ceil(m.duration_ms / 1000) + 's' : '';
+            if (m.video_url) {
+                const hdBtn = !isGif && m.hd_video_url && m.hd_video_url !== m.video_url
+                    ? `<button type="button" class="video-hd-btn" data-hd-src="${escapeHtml(m.hd_video_url)}" onclick="switchVideoHd(this, '${vidId}', event)">HD</button>`
+                    : '';
+                out += `
+                <div class="video-wrap">
+                    <video id="${vidId}" class="tweet-video" ${isGif ? 'autoplay loop muted playsinline data-autoplay="1"' : 'controls playsinline'} preload="metadata" poster="${posterSrc}" src="${escapeHtml(m.video_url)}"></video>
+                    ${isGif ? '<span class="gif-pill">GIF</span>' : `<div class="video-meta-row"><span>Video${durText ? ' · ' + durText : ''}</span>${hdBtn}</div>`}
+                </div>`;
+            } else {
+                const imgId = 'img_' + Math.random().toString(36).substr(2, 9);
+                const previewUrl = mediaPreviewUrl(m.url, true);
+                out += `
+                <div>
+                    <div style="font-size:12px; color:var(--text-muted); margin-top:6px;">${isGif ? 'GIF' : 'Video'}${durText ? ' · ' + durText : ''} · poster frame</div>
+                    <img id="${imgId}" src="${posterSrc}" class="tweet-img" loading="lazy" data-preview-url="${escapeHtml(previewUrl)}" data-original-url="${escapeHtml(m.url)}" onerror="retryOriginalPreview(this)" />
+                </div>`;
+            }
+            if (m.alt_text) out += `<div style="font-size:12px; color:var(--text-muted); margin-top:5px;">${escapeHtml(m.alt_text)}</div>`;
+        });
+        return out + '</div>';
+    }
+
+    tw.media.forEach(m => {
+        const imgId = 'img_' + Math.random().toString(36).substr(2, 9);
+        const isVideo = m.type === 'video' || m.type === 'animated_gif';
+        const previewUrl = mediaPreviewUrl(m.url, isVideo);
+        const mediaLabel = isVideo ? (m.type === 'animated_gif' ? 'GIF' : 'Video') + (m.duration_ms ? ' · ' + Math.ceil(m.duration_ms / 1000) + 's' : '') + ' · poster frame' : 'Photo';
+        if (isVideo) out += `<div style="font-size:12px; color:var(--text-muted); margin-top:6px;">${mediaLabel}</div>`;
+        if (appConfig.image_mode === 'off') {
+            out += `<div style="font-size:13px; color:var(--text-muted); margin-top:4px;">[${mediaLabel}]</div>`;
+        } else {
+            out += `
+            <div style="margin-top:6px;">
+                <button type="button" class="btn btn-secondary btn-block" data-url="${escapeHtml(previewUrl)}" data-hd-url="${escapeHtml(m.url)}" onclick="loadThumbImg(this, this.dataset.url, '${imgId}', this.dataset.hdUrl)" style="font-size:13px; padding:8px 14px;">
+                    ${isVideo ? 'Load poster frame' : 'Load small preview'}
+                </button>
+            </div>`;
+        }
+        if (m.alt_text) out += `<div style="font-size:13px; color:var(--text-muted); margin-top:6px;">${escapeHtml(m.alt_text)}</div>`;
+    });
+    return out + '</div>';
+}
+
+function renderCardHtml(card) {
+    if (!card || (!card.title && !card.thumb_url)) return '';
+    const imgHtml = (appConfig.image_mode === 'auto' && card.thumb_url)
+        ? `<img class="link-card-img" src="${localImageUrl(card.thumb_url, supportsRichModeNative() ? 'rich' : 'hd')}" alt="" loading="lazy" onerror="this.remove()" />`
+        : '';
+    const inner = `
+        ${imgHtml}
+        <div class="link-card-body">
+            ${card.domain ? `<div class="link-card-domain">${escapeHtml(card.domain)}</div>` : ''}
+            ${card.title ? `<div class="link-card-title">${escapeHtml(card.title)}</div>` : ''}
+            ${card.description ? `<div class="link-card-desc">${escapeHtml(card.description)}</div>` : ''}
+        </div>`;
+    if (card.url) {
+        return `<a class="link-card" href="${escapeHtml(card.url)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${inner}</a>`;
+    }
+    return `<div class="link-card" onclick="event.stopPropagation()">${inner}</div>`;
+}
+
+function renderPollHtml(poll) {
+    if (!poll || !Array.isArray(poll.choices) || !poll.choices.length) return '';
+    const total = Number(poll.total) || 0;
+    const rows = poll.choices.map(ch => {
+        const pct = total > 0 ? Math.round((ch.count / total) * 100) : 0;
+        return `
+        <div class="poll-row">
+            <div class="poll-bar" style="width:${pct}%"></div>
+            <span class="poll-label">${escapeHtml(ch.label)}</span>
+            <span class="poll-pct">${total > 0 ? pct + '%' : ''}</span>
+        </div>`;
+    }).join('');
+    const meta = formatCount(total) + (total === 1 ? ' vote' : ' votes') + (poll.final ? ' · Final results' : '');
+    return `<div class="poll-box" onclick="event.stopPropagation()">${rows}<div class="poll-meta">${meta}</div></div>`;
+}
+
 function renderTweetHtml(tw) {
     let rtHtml = tw.is_retweet
         ? `<div class="retweet-banner">⇄ Retweeted by ${escapeHtml(tw.retweeted_by || 'Someone')}</div>`
         : '';
 
-    let mediaHtml = '';
-    if (tw.media && tw.media.length > 0) {
-        mediaHtml += '<div style="margin-top:8px;" onclick="event.stopPropagation()">';
-        tw.media.forEach(m => {
-            let imgId = 'img_' + Math.random().toString(36).substr(2, 9);
-            const isVideo = m.type === 'video' || m.type === 'animated_gif';
-            const previewUrl = mediaPreviewUrl(m.url, isVideo);
-            const mediaLabel = isVideo ? (m.type === 'animated_gif' ? 'GIF' : 'Video') + (m.duration_ms ? ' · ' + Math.ceil(m.duration_ms / 1000) + 's' : '') + ' · poster frame' : 'Photo';
-            if (isVideo) mediaHtml += `<div style="font-size:12px; color:var(--text-muted); margin-top:6px;">${mediaLabel}</div>`;
-            if (appConfig.image_mode === 'auto') {
-                mediaHtml += `
-                <div>
-                    <img id="${imgId}" src="${localImageUrl(previewUrl, 'thumb')}" class="tweet-img" loading="lazy" data-preview-url="${escapeHtml(previewUrl)}" data-original-url="${escapeHtml(m.url)}" onerror="retryOriginalPreview(this)" />
-                    <div style="text-align:right; margin-top:4px;">
-                        <button type="button" data-url="${escapeHtml(m.url)}" onclick="loadHdImg(this, this.dataset.url, '${imgId}')" style="font-size:12px; color:var(--text-muted); background:none; border:none; cursor:pointer; padding:4px 8px;">
-                            HD View
-                        </button>
-                    </div>
-                </div>`;
-            } else if (appConfig.image_mode === 'off') {
-                mediaHtml += `<div style="font-size:13px; color:var(--text-muted); margin-top:4px;">[${mediaLabel}]</div>`;
-            } else {
-                mediaHtml += `
-                <div style="margin-top:6px;">
-                    <button type="button" class="btn btn-secondary btn-block" data-url="${escapeHtml(previewUrl)}" data-hd-url="${escapeHtml(m.url)}" onclick="loadThumbImg(this, this.dataset.url, '${imgId}', this.dataset.hdUrl)" style="font-size:13px; padding:8px 14px;">
-                        ${isVideo ? 'Load poster frame' : 'Load small preview'}
-                    </button>
-                </div>`;
-            }
-            if (m.alt_text) mediaHtml += `<div style="font-size:13px; color:var(--text-muted); margin-top:6px;">${escapeHtml(m.alt_text)}</div>`;
-        });
-        mediaHtml += '</div>';
-    }
+    const mediaHtml = renderMediaHtml(tw);
+    const pollHtml = renderPollHtml(tw.poll);
+    const cardHtml = !mediaHtml && !pollHtml ? renderCardHtml(tw.card_preview) : '';
 
     let quotedHtml = '';
     if (tw.quoted) {
         let q = tw.quoted;
+        const qBadge = q.user_verified ? '<span class="verified-badge" title="Verified">&#10003;</span>' : '';
         quotedHtml = `
         <div class="quoted-box" onclick="viewThread('${escapeHtml(q.id)}'); event.stopPropagation();">
             <div class="tweet-header" style="margin-bottom:4px;">
                 ${renderAvatarHtml(q, 'mini')}
                 <div class="tweet-meta">
-                    <span class="tweet-name">${escapeHtml(q.user_name || q.user_screen_name || '𝕏 User')}</span>
+                    <span class="tweet-name">${escapeHtml(q.user_name || q.user_screen_name || '𝕏 User')}</span>${qBadge}
                     <span class="tweet-handle">${q.user_screen_name ? '@' + escapeHtml(q.user_screen_name) : ''}</span>
                 </div>
             </div>
@@ -2313,6 +3160,7 @@ function renderTweetHtml(tw) {
         </div>`;
     }
 
+    const verifiedHtml = tw.user_verified ? '<span class="verified-badge" title="Verified">&#10003;</span>' : '';
     let handleHtml = tw.user_screen_name ? `<span class="tweet-handle">@${escapeHtml(tw.user_screen_name)}</span>` : '';
     let timeHtml = tw.created_at ? `<span class="tweet-dot">&middot;</span><span class="tweet-time">${escapeHtml(tw.created_at)}</span>` : '';
     let bookmarked = isBookmarked(tw.id);
@@ -2323,9 +3171,9 @@ function renderTweetHtml(tw) {
         <div class="tweet-header">
             ${renderAvatarHtml(tw)}
             <div class="tweet-meta">
-                <span class="tweet-name" onclick="searchTag('from:${escapeHtml(tw.user_screen_name)}'); event.stopPropagation();">
+                <span class="tweet-name" onclick="openProfile('${escapeHtml(tw.user_screen_name)}'); event.stopPropagation();">
                     ${escapeHtml(tw.user_name || tw.user_screen_name || '𝕏 User')}
-                </span>
+                </span>${verifiedHtml}
                 ${handleHtml}
                 ${timeHtml}
             </div>
@@ -2333,14 +3181,17 @@ function renderTweetHtml(tw) {
         </div>
         <div class="tweet-body" onclick="viewThread('${escapeHtml(tw.id)}')">${linkify(tw.text)}</div>
         ${mediaHtml}
+        ${pollHtml}
+        ${cardHtml}
         ${quotedHtml}
         <div class="tweet-actions">
             <div class="tweet-actions-left">
-                <span class="action-item" data-reply-id="${escapeHtml(tw.id)}" onclick="commentTweet('${escapeHtml(tw.id)}', event)">💬 ${tw.replies || 0}</span>
-                <span class="action-item${tw.retweeted ? ' retweeted' : ''}" data-rt-id="${escapeHtml(tw.id)}" onclick="toggleRetweet('${escapeHtml(tw.id)}', event)">⇄ ${tw.retweets || 0}</span>
-                <span class="action-item${tw.liked ? ' liked' : ''}" data-like-id="${escapeHtml(tw.id)}" onclick="toggleLike('${escapeHtml(tw.id)}', event)">${tw.liked ? '♥' : '♡'} ${tw.likes || 0}</span>
+                <span class="action-item" data-reply-id="${escapeHtml(tw.id)}" onclick="commentTweet('${escapeHtml(tw.id)}', event)">💬 ${formatCount(tw.replies || 0)}</span>
+                <span class="action-item${tw.retweeted ? ' retweeted' : ''}" data-rt-id="${escapeHtml(tw.id)}" onclick="toggleRetweet('${escapeHtml(tw.id)}', event)">⇄ ${formatCount(tw.retweets || 0)}</span>
+                <span class="action-item${tw.liked ? ' liked' : ''}" data-like-id="${escapeHtml(tw.id)}" onclick="toggleLike('${escapeHtml(tw.id)}', event)">${tw.liked ? '♥' : '♡'} ${formatCount(tw.likes || 0)}</span>
             </div>
             <div class="tweet-actions-right">
+                <span class="action-item" onclick="openQuoteComposer('${escapeHtml(tw.id)}', event)" title="Quote">❝</span>
                 <span class="action-item${bookmarked ? ' saved' : ''}" data-bm-id="${escapeHtml(tw.id)}" onclick="toggleBookmark('${escapeHtml(tw.id)}', event)">${bookmarked ? '★ Saved' : '☆ Save'}</span>
                 <span class="action-item" onclick="copyTweetLink('${escapeHtml(tw.user_screen_name)}', '${escapeHtml(tw.id)}', event)">🔗</span>
             </div>
@@ -2350,7 +3201,7 @@ function renderTweetHtml(tw) {
 
 function extractUser(tw) {
     let uRes = tw.core?.user_results?.result || tw.user_results?.result || tw.user;
-    if (!uRes) return { name: '', screen_name: '', avatar: '' };
+    if (!uRes) return { id: '', name: '', screen_name: '', avatar: '', verified: false };
 
     if (uRes.__typename === 'UserWithVisibilityResults') {
         uRes = uRes.user || uRes;
@@ -2359,11 +3210,13 @@ function extractUser(tw) {
     let core = uRes.core || {};
     let legacy = uRes.legacy || {};
 
+    let id = String(uRes.rest_id || legacy.id_str || uRes.id_str || '');
     let name = decodeHtmlEntities(core.name || legacy.name || uRes.name || '');
     let screen_name = core.screen_name || legacy.screen_name || uRes.screen_name || '';
     let avatar = uRes.avatar?.image_url || legacy.profile_image_url_https || uRes.profile_image_url_https || '';
+    let verified = !!(uRes.is_blue_verified || legacy.verified || uRes.ext_is_blue_verified);
 
-    return { name, screen_name, avatar };
+    return { id, name, screen_name, avatar, verified };
 }
 
 function findInstructions(obj) {
@@ -2482,6 +3335,108 @@ function isQueryIdFailure(result) {
     return result.status === 404 || /GRAPHQL_VALIDATION_FAILED|unknown query|query.*not found/i.test(result.error || '');
 }
 
+function safeHttpsUrl(candidate, allowedHosts) {
+    if (!candidate || typeof candidate !== 'string') return '';
+    try {
+        const parsed = new URL(candidate);
+        if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return '';
+        if (allowedHosts && !allowedHosts.includes(parsed.hostname)) return '';
+        if (allowedHosts && parsed.protocol !== 'https:') return '';
+        return parsed.href;
+    } catch (_) {
+        return '';
+    }
+}
+
+function selectMp4Variants(videoInfo) {
+    const raw = videoInfo?.variants;
+    if (!Array.isArray(raw)) return { videoUrl: '', hdVideoUrl: '' };
+    const mp4s = raw
+        .filter(v => v && v.content_type === 'video/mp4')
+        .map(v => ({ url: safeHttpsUrl(v.url, ['video.twimg.com']), bitrate: Number(v.bitrate) || 0 }))
+        .filter(v => !!v.url)
+        .sort((a, b) => a.bitrate - b.bitrate);
+    if (!mp4s.length) return { videoUrl: '', hdVideoUrl: '' };
+    const standard = mp4s.filter(v => v.bitrate > 0 && v.bitrate <= 950000);
+    const fast = standard.length ? standard[standard.length - 1] : mp4s[0];
+    const best = mp4s[mp4s.length - 1];
+    return {
+        videoUrl: fast.url,
+        hdVideoUrl: best.url !== fast.url ? best.url : ''
+    };
+}
+
+function extractCard(tw) {
+    const rawCard = tw?.card?.legacy || tw?.card;
+    if (!rawCard || !rawCard.binding_values) return { poll: null, card_preview: null };
+    const bv = {};
+    if (Array.isArray(rawCard.binding_values)) {
+        rawCard.binding_values.forEach(item => {
+            if (item && item.key && item.value) bv[item.key] = item.value;
+        });
+    } else if (typeof rawCard.binding_values === 'object') {
+        Object.assign(bv, rawCard.binding_values);
+    }
+    const strVal = (k) => decodeHtmlEntities(bv[k]?.string_value || '');
+    const cardName = String(rawCard.name || '');
+
+    if (/^poll\d+choice/i.test(cardName)) {
+        const choices = [];
+        let total = 0;
+        for (let i = 1; i <= 4; i++) {
+            const label = strVal('choice' + i + '_label');
+            if (!label) continue;
+            const count = Number(bv['choice' + i + '_count']?.string_value) || 0;
+            choices.push({ label, count });
+            total += count;
+        }
+        if (choices.length >= 2) {
+            return {
+                poll: {
+                    choices,
+                    total,
+                    final: bv.counts_are_final?.boolean_value === true || strVal('counts_are_final') === 'true'
+                },
+                card_preview: null
+            };
+        }
+    }
+
+    const cardUrlRaw = strVal('card_url') || rawCard.url || '';
+    let expandedUrl = safeHttpsUrl(cardUrlRaw);
+    const urls = tw?.legacy?.entities?.urls || tw?.entities?.urls || [];
+    for (const u of urls) {
+        if (u && (u.url === cardUrlRaw || !expandedUrl) && u.expanded_url) {
+            const safeExp = safeHttpsUrl(u.expanded_url);
+            if (safeExp) { expandedUrl = safeExp; break; }
+        }
+    }
+    let domain = strVal('domain');
+    if (!domain && expandedUrl) {
+        try { domain = new URL(expandedUrl).hostname.replace(/^www\./, ''); } catch (_) {}
+    }
+    const title = strVal('title');
+    const description = strVal('description');
+    const thumbRaw = bv.summary_photo_image_large?.image_value?.url
+        || bv.photo_image_full_size?.image_value?.url
+        || bv.thumbnail_image_large?.image_value?.url
+        || bv.summary_photo_image?.image_value?.url
+        || bv.thumbnail_image?.image_value?.url
+        || '';
+    const thumbUrl = safeHttpsUrl(thumbRaw, ['pbs.twimg.com']);
+    if (!title && !thumbUrl) return { poll: null, card_preview: null };
+    return {
+        poll: null,
+        card_preview: {
+            url: expandedUrl,
+            domain,
+            title,
+            description,
+            thumb_url: thumbUrl
+        }
+    };
+}
+
 function parseSingleTweet(tw) {
     if (!tw) return null;
     if (tw.__typename === 'TweetWithVisibilityResults') tw = tw.tweet || tw;
@@ -2516,9 +3471,20 @@ function parseSingleTweet(tw) {
     extMedia.forEach(m => {
         let mUrl = m.media_url_https || m.media_url;
         if (mUrl) {
-            media.push({ url: mUrl, type: m.type, duration_ms: m.video_info?.duration_millis || 0, alt_text: decodeHtmlEntities(m.ext_alt_text || m.alt_text || '') });
+            const { videoUrl, hdVideoUrl } = selectMp4Variants(m.video_info);
+            const entry = {
+                url: mUrl,
+                type: m.type,
+                duration_ms: m.video_info?.duration_millis || 0,
+                alt_text: decodeHtmlEntities(m.ext_alt_text || m.alt_text || '')
+            };
+            if (videoUrl) entry.video_url = videoUrl;
+            if (hdVideoUrl) entry.hd_video_url = hdVideoUrl;
+            media.push(entry);
         }
     });
+
+    const { poll, card_preview } = extractCard(tw);
 
     // Quoted tweet
     let quoted = null;
@@ -2527,13 +3493,16 @@ function parseSingleTweet(tw) {
         quoted = parseSingleTweet(qRes);
     }
 
+    const rawDate = legacy.created_at || tw.created_at;
     let parsed = {
         id,
         text,
+        user_id: user.id || '',
         user_name: user.name,
         user_screen_name: user.screen_name,
         user_avatar: user.avatar || '',
-        created_at: legacy.created_at ? new Date(legacy.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '',
+        user_verified: !!user.verified,
+        created_at: rawDate ? formatRelativeTime(rawDate) : '',
         likes: legacy.favorite_count || tw.favorite_count || 0,
         retweets: legacy.retweet_count || tw.retweet_count || 0,
         replies: legacy.reply_count || tw.reply_count || 0,
@@ -2541,6 +3510,8 @@ function parseSingleTweet(tw) {
         retweeted: !!(legacy.retweeted || tw.retweeted),
         bookmarked: !!(legacy.bookmarked || tw.bookmarked),
         media,
+        poll,
+        card_preview,
         quoted,
         is_retweet: isRetweet,
         retweeted_by: retweetedBy,
@@ -2612,6 +3583,7 @@ function loadFeed(feedType, forceRefresh = false, preserveStatus = false) {
             out += cachedList.map(t => renderTweetHtml(allTweetsMap[t.id] || t)).join('');
         }
         container.innerHTML = '<div id="feedContainer">' + out + '</div>';
+        initVideoAutoPauseObserver(container);
         return;
     }
 
@@ -2633,6 +3605,8 @@ function loadFeed(feedType, forceRefresh = false, preserveStatus = false) {
                 list.forEach(t => { if (t && t.id) allTweetsMap[t.id] = t; });
                 container.innerHTML = feedToolbar() + '<div id="feedContainer">' + list.map(renderTweetHtml).join('') + '</div>';
                 hasCached = true;
+                initSeenObserver(document.getElementById('feedContainer'));
+                initVideoAutoPauseObserver(container);
                 renderLoadMoreButton(feedType);
             }
         } catch (e) {}
@@ -2666,24 +3640,39 @@ function fetchFeedData(feedType, isPaging) {
         return;
     }
 
-    let cursor = isPaging ? cursors[feedType] : null;
-    let variables = cfg.buildVariables(FEED_PAGE_SIZE, cursor);
+    const pageSize = getFeedPageSize();
+    const cursor = isPaging ? cursors[feedType] : null;
+    const canPostTimeline = supportsSignedPostTimelines();
+    const seenBatch = (canPostTimeline && shouldSyncSeen()) ? consumePendingSeenBatch(100) : [];
+    const variables = cfg.buildVariables(pageSize, cursor, seenBatch);
 
-    let url = `https://x.com/i/api/graphql/${cfg.queryId}/${cfg.op}?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
+    const dispatchFeedRequest = (queryId, onDone) => {
+        const path = `/i/api/graphql/${queryId}/${cfg.op}`;
+        if (canPostTimeline) {
+            const payload = JSON.stringify({ variables, features: GRAPHQL_FEATURES, queryId });
+            performSignedPost(path, payload, onDone);
+        } else {
+            const url = `https://x.com${path}?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
+            performAsyncGet(url, onDone);
+        }
+    };
 
-    performAsyncGet(url, (resStr) => {
-        if (generation !== viewGeneration || currentView !== 'feed' || currentTab !== feedType) return;
+    dispatchFeedRequest(cfg.queryId, (resStr) => {
+        if (generation !== viewGeneration || currentView !== 'feed' || currentTab !== feedType) {
+            try {
+                const check = parseTwitterGraphql(resStr);
+                if (check.error) requeueSeenBatch(seenBatch);
+            } catch (_) { requeueSeenBatch(seenBatch); }
+            return;
+        }
         let fallbackPending = false;
         try {
             let parsed = parseTwitterGraphql(resStr);
 
-            const container = document.getElementById('mainContent');
-
             if (parsed.error) {
                 if (cfg.fallbackQueryId && isQueryIdFailure(parsed)) {
                     fallbackPending = true;
-                    let fallbackUrl = `https://x.com/i/api/graphql/${cfg.fallbackQueryId}/${cfg.op}?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
-                    performAsyncGet(fallbackUrl, (fbStr) => {
+                    dispatchFeedRequest(cfg.fallbackQueryId, (fbStr) => {
                         if (isFetching === requestKey) isFetching = false;
                         if (generation !== viewGeneration || currentView !== 'feed' || currentTab !== feedType) return;
                         try {
@@ -2691,14 +3680,17 @@ function fetchFeedData(feedType, isPaging) {
                             if (fbParsed.tweets && fbParsed.tweets.length > 0) {
                                 applyFeedTweets(feedType, fbParsed, isPaging);
                             } else {
+                                requeueSeenBatch(seenBatch);
                                 displayFeedError(feedType, fbParsed.error ? fbParsed : parsed, isPaging);
                             }
                         } catch (error) {
+                            requeueSeenBatch(seenBatch);
                             displayFeedError(feedType, { error: error.message || 'Could not read feed response' }, isPaging);
                         }
                     });
                     return;
                 }
+                requeueSeenBatch(seenBatch);
                 displayFeedError(feedType, parsed, isPaging);
                 return;
             }
@@ -2706,6 +3698,7 @@ function fetchFeedData(feedType, isPaging) {
             applyFeedTweets(feedType, parsed, isPaging);
         } catch(err) {
             console.error("fetchFeedData error:", err);
+            requeueSeenBatch(seenBatch);
             displayFeedError(feedType, { error: err.message || 'Could not read feed response' }, isPaging);
         } finally {
             if (isFetching === requestKey && !fallbackPending) isFetching = false;
@@ -2746,13 +3739,18 @@ function applyFeedTweets(feedType, parsed, isPaging) {
         setFeedProgress(false, freshTweets.length ? '' : cursors[feedType] ? 'No new posts on this page. Load more to continue.' : 'No more posts.');
         showStatus('', false);
     } else {
+        let sourceTweets = parsed.tweets;
+        if (feedType === 'foryou' && shouldSyncSeen() && seenForYouIds.size > 0) {
+            const unseen = sourceTweets.filter(t => t && !seenForYouIds.has(String(t.id)));
+            if (unseen.length > 0) sourceTweets = unseen;
+        }
         const seenIds = new Set();
-        currentTweetsList = parsed.tweets.filter(t => {
+        currentTweetsList = sourceTweets.filter(t => {
             if (seenIds.has(t.id)) return false;
             seenIds.add(t.id);
             return true;
         });
-        parsed.tweets.forEach(t => { if (t && t.id) allTweetsMap[t.id] = t; });
+        sourceTweets.forEach(t => { if (t && t.id) allTweetsMap[t.id] = t; });
         if (window.AndroidBridge) {
             AndroidBridge.saveCache('feed_' + feedType, JSON.stringify(currentTweetsList));
             AndroidBridge.saveCache('feed_cache', JSON.stringify(currentTweetsList));
@@ -2765,6 +3763,8 @@ function applyFeedTweets(feedType, parsed, isPaging) {
         setFeedProgress(false, 'Updated just now');
     }
 
+    initSeenObserver(document.getElementById('feedContainer'));
+    initVideoAutoPauseObserver(container);
     renderLoadMoreButton(feedType);
 }
 
@@ -2790,9 +3790,24 @@ function displayFeedError(feedType, parsed, isPaging) {
     }
 }
 
+function attachFeedInfiniteScroll(feedType) {
+    disconnectFeedAutoLoader();
+    if (appConfig.image_mode !== 'auto') return;
+    if (typeof IntersectionObserver !== 'function') return;
+    const box = document.getElementById('loadMoreBox');
+    if (!box || !cursors[feedType]) return;
+    feedAutoLoaderObserver = new IntersectionObserver((entries) => {
+        if (entries.some(e => e.isIntersecting) && currentView === 'feed' && currentTab === feedType && cursors[feedType] && !isFetching) {
+            loadMoreTweets(feedType);
+        }
+    }, { rootMargin: '450px 0px' });
+    feedAutoLoaderObserver.observe(box);
+}
+
 function renderLoadMoreButton(feedType) {
     let oldBtn = document.getElementById('loadMoreBox');
     if (oldBtn) oldBtn.remove();
+    disconnectFeedAutoLoader();
 
     if (cursors[feedType] && currentView === 'feed' && currentTab === feedType) {
         const loadMoreHtml = `
@@ -2803,6 +3818,7 @@ function renderLoadMoreButton(feedType) {
         </div>`;
         const container = document.getElementById('mainContent');
         container.insertAdjacentHTML('beforeend', loadMoreHtml);
+        attachFeedInfiniteScroll(feedType);
     }
 }
 
@@ -2828,19 +3844,21 @@ function getCurrentScrollY() {
 
 function restoreScrollPosition(scrollY) {
     const target = Math.max(0, Number(scrollY) || 0);
+    const canRestoreView = () => ['feed', 'search', 'profile', 'notifications'].includes(currentView);
     if (typeof window.scrollTo === 'function') window.scrollTo(0, target);
     if (typeof requestAnimationFrame === 'function') {
         requestAnimationFrame(() => {
-            if (currentView === 'feed' || currentView === 'search') window.scrollTo(0, target);
+            if (canRestoreView()) window.scrollTo(0, target);
         });
     }
     setTimeout(() => {
-        if (currentView === 'feed' || currentView === 'search') window.scrollTo(0, target);
+        if (canRestoreView()) window.scrollTo(0, target);
     }, 60);
 }
 
 // Conversation / Thread View
 function viewThread(tweetId, focusReply = false) {
+    markTweetSeen(tweetId);
     const capturedScrollY = getCurrentScrollY();
     if (currentView !== 'thread') {
         threadOriginView = currentView;
@@ -2849,12 +3867,14 @@ function viewThread(tweetId, focusReply = false) {
             savedFeedTab = currentTab;
             savedFeedRequestInterrupted = !!(isFetching && isFetching.startsWith(currentTab + ':' + viewGeneration + ':'));
             if (savedFeedRequestInterrupted) isFetching = false;
+            disconnectSeenObserver();
+            disconnectFeedAutoLoader();
+            pauseAllFeedVideos();
             const feedContainer = document.getElementById('mainContent');
             savedFeedMarkup = feedContainer.innerHTML;
             savedFeedNodes = document.createDocumentFragment();
             while (feedContainer.firstChild) savedFeedNodes.appendChild(feedContainer.firstChild);
-        }
-        if (currentView === 'search') {
+        } else if (currentView === 'search') {
             savedSearchScrollY = capturedScrollY;
             if (searchState && searchState.loading) {
                 searchState.loading = false;
@@ -2865,12 +3885,20 @@ function viewThread(tweetId, focusReply = false) {
                 }
             }
             savedSearchMarkup = document.getElementById('mainContent').innerHTML;
+        } else if (currentView === 'profile') {
+            savedProfileScrollY = capturedScrollY;
+            pauseAllFeedVideos();
+            savedProfileMarkup = document.getElementById('mainContent').innerHTML;
+        } else if (currentView === 'notifications') {
+            savedNotifScrollY = capturedScrollY;
+            savedNotifMarkup = document.getElementById('mainContent').innerHTML;
         }
     }
     currentView = 'thread';
     viewGeneration++;
     currentFeedOrigin = currentTab;
-    history.pushState({ view: 'thread', id: tweetId, originTab: currentTab }, '', '#thread-' + tweetId);
+    updateHeaderActions();
+    history.pushState({ view: 'thread', id: tweetId, originView: threadOriginView, originTab: currentTab }, '', '#thread-' + tweetId);
     renderThreadView(tweetId, focusReply);
 }
 
@@ -2965,6 +3993,7 @@ function renderThreadData(tweetId, focal, parsed) {
 
     if (replies.length > 0) {
         repContainer.innerHTML = '<div style="padding:12px 16px; font-size:14px; font-weight:700; color:var(--text-muted); border-bottom:1px solid var(--border);">Replies (' + replies.length + ')</div>' + replies.map(renderTweetHtml).join('');
+        initVideoAutoPauseObserver(document.getElementById('threadContainer'));
     } else if (parsed.error) {
         repContainer.innerHTML = `<div class="card"><div class="card-title" style="color:var(--red);">Error</div><p class="card-desc">${escapeHtml(parsed.error)}</p></div>`;
     } else {
@@ -2972,10 +4001,54 @@ function renderThreadData(tweetId, focal, parsed) {
     }
 }
 
+function restoreNonFeedOrigin() {
+    if (threadOriginView === 'search' && savedSearchMarkup) {
+        activeThreadTweetId = null;
+        currentView = 'search';
+        viewGeneration++;
+        document.getElementById('mainContent').innerHTML = savedSearchMarkup;
+        syncVisibleTweetActions();
+        initVideoAutoPauseObserver(document.getElementById('mainContent'));
+        document.getElementById('tabNav').style.display = 'none';
+        document.querySelectorAll('.bottom-item').forEach((el, idx) => el.classList.toggle('active', idx === 1));
+        updateHeaderActions();
+        restoreScrollPosition(savedSearchScrollY);
+        savedSearchMarkup = '';
+        return true;
+    }
+    if (threadOriginView === 'profile' && savedProfileMarkup) {
+        activeThreadTweetId = null;
+        currentView = 'profile';
+        viewGeneration++;
+        document.getElementById('mainContent').innerHTML = savedProfileMarkup;
+        syncVisibleTweetActions();
+        initVideoAutoPauseObserver(document.getElementById('mainContent'));
+        document.getElementById('tabNav').style.display = 'none';
+        document.querySelectorAll('.bottom-item').forEach(el => el.classList.remove('active'));
+        updateHeaderActions();
+        restoreScrollPosition(savedProfileScrollY);
+        savedProfileMarkup = '';
+        return true;
+    }
+    if (threadOriginView === 'notifications' && savedNotifMarkup) {
+        activeThreadTweetId = null;
+        currentView = 'notifications';
+        viewGeneration++;
+        document.getElementById('mainContent').innerHTML = savedNotifMarkup;
+        document.getElementById('tabNav').style.display = 'none';
+        document.querySelectorAll('.bottom-item').forEach(el => el.classList.remove('active'));
+        updateHeaderActions();
+        restoreScrollPosition(savedNotifScrollY);
+        savedNotifMarkup = '';
+        return true;
+    }
+    return false;
+}
+
 function goBackToFeed() {
     if (window.history.state && window.history.state.view === 'thread') {
         window.history.back();
-    } else {
+    } else if (!restoreNonFeedOrigin()) {
         restoreFeedView(currentFeedOrigin, threadOriginView === 'feed');
     }
 }
@@ -2990,6 +4063,10 @@ function restoreFeedView(targetTab, fromThread = false) {
     document.querySelectorAll('.nav-tab').forEach((el, idx) => {
         el.classList.toggle('active', ['following', 'foryou', 'cache'][idx] === currentTab);
     });
+    document.querySelectorAll('.bottom-item').forEach((el, idx) => {
+        el.classList.toggle('active', idx === 0);
+    });
+    updateHeaderActions();
     if (window.location.hash.startsWith('#thread-')) {
         try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch(e){}
     }
@@ -3003,6 +4080,9 @@ function restoreFeedView(targetTab, fromThread = false) {
             container.innerHTML = savedFeedMarkup;
         }
         syncVisibleTweetActions();
+        initSeenObserver(document.getElementById('feedContainer'));
+        initVideoAutoPauseObserver(container);
+        attachFeedInfiniteScroll(currentTab);
         if (savedFeedRequestInterrupted) {
             setFeedProgress(false, 'Loading interrupted. Tap Refresh to retry.');
             const loadMoreButton = document.querySelector('#loadMoreBox button');
@@ -3026,21 +4106,14 @@ function restoreFeedView(targetTab, fromThread = false) {
 
 // History stack back navigation
 window.onpopstate = function(e) {
+    if (lightboxState) closeLightbox();
     if (e.state && e.state.view === 'thread') {
         currentView = 'thread';
         viewGeneration++;
+        updateHeaderActions();
         renderThreadView(e.state.id);
-    } else if (currentView === 'thread' && threadOriginView === 'search' && savedSearchMarkup) {
-        activeThreadTweetId = null;
-        currentView = 'search';
-        viewGeneration++;
-        document.getElementById('mainContent').innerHTML = savedSearchMarkup;
-        syncVisibleTweetActions();
-        document.getElementById('tabNav').style.display = 'none';
-        document.querySelectorAll('.bottom-item').forEach((el, idx) => {
-            el.classList.toggle('active', idx === 1);
-        });
-        restoreScrollPosition(savedSearchScrollY);
+    } else if (currentView === 'thread' && restoreNonFeedOrigin()) {
+        return;
     } else {
         let origin = (e.state && e.state.originTab) ? e.state.originTab : currentFeedOrigin || currentTab;
         restoreFeedView(origin, currentView === 'thread' && threadOriginView === 'feed');
@@ -3094,6 +4167,7 @@ function prepareXTransaction(done) {
             finish('Could not prepare X session. Check your connection and account cookies.');
             return;
         }
+        try { extractViewerFromHomeHtml(html); } catch (_) {}
         const chunk = html.match(/,(\d+):"ondemand\.s"/);
         const hash = chunk && html.match(new RegExp(',' + chunk[1] + ':"([0-9a-f]+)"'));
         if (!hash) {
@@ -3268,7 +4342,7 @@ function openSearchInX() {
     window.location.href = 'https://x.com/search?q=' + encodeURIComponent(lastSearchQuery);
 }
 
-function buildTweetVariables(text, replyToId) {
+function buildTweetVariables(text, replyToId, quoteTweet) {
     const variables = {
         tweet_text: text,
         dark_request: false,
@@ -3284,6 +4358,9 @@ function buildTweetVariables(text, replyToId) {
             in_reply_to_tweet_id: String(replyToId),
             exclude_reply_user_ids: []
         };
+    }
+    if (quoteTweet && quoteTweet.id) {
+        variables.attachment_url = 'https://x.com/' + (quoteTweet.screenName || 'i') + '/status/' + String(quoteTweet.id);
     }
     return variables;
 }
@@ -3331,24 +4408,49 @@ function renderSearchResults(q, tweets, resDiv) {
     currentTweetsList = tweets;
     let header = '';
     if (q.startsWith('from:')) {
-        let user = q.replace('from:', '');
+        let user = q.replace('from:', '').trim();
         header = `
-        <div style="padding:14px 16px; border-bottom:1px solid var(--border);">
-            <div style="font-weight:800; font-size:17px;">@${escapeHtml(user)}</div>
-            <div style="font-size:13px; color:var(--text-muted);">Recent tweets</div>
+        <div style="padding:14px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:8px;">
+            <div>
+                <div style="font-weight:800; font-size:17px;">@${escapeHtml(user)}</div>
+                <div style="font-size:13px; color:var(--text-muted);">Recent tweets</div>
+            </div>
+            <button type="button" class="btn btn-secondary" style="padding:6px 12px; font-size:12px;" onclick="openProfile('${escapeHtml(user)}')">Open Profile</button>
         </div>`;
     }
     resDiv.innerHTML = header + tweets.map(renderTweetHtml).join('');
+    initVideoAutoPauseObserver(resDiv);
+}
+
+function updateComposeCharCount() {
+    const input = document.getElementById('postText');
+    const counter = document.getElementById('postCharCount');
+    if (!input || !counter) return;
+    const len = input.value.length;
+    counter.textContent = len + ' / 280';
+    counter.style.color = len > 280 ? 'var(--red)' : (len >= 260 ? '#f59e0b' : 'var(--text-muted)');
 }
 
 function renderPost() {
     const container = document.getElementById('mainContent');
+    const quotedTweet = composeQuoteTweetId ? findTweetById(composeQuoteTweetId) : null;
+    const quotePreviewHtml = quotedTweet ? `
+        <div class="quoted-box" style="margin-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <span style="font-size:12px; font-weight:700; color:var(--accent);">Quoting @${escapeHtml(quotedTweet.user_screen_name || 'post')}</span>
+                <button type="button" class="header-btn" style="padding:2px 8px; font-size:11px;" onclick="composeQuoteTweetId=null;renderPost()">Cancel</button>
+            </div>
+            <div style="font-size:13px; color:var(--text-muted);">${escapeHtml(quotedTweet.text).slice(0, 180)}</div>
+        </div>` : '';
+
     container.innerHTML = `
     <div class="card">
-        <div class="card-title">Compose Post</div>
+        <div class="card-title">${quotedTweet ? 'Quote Post' : 'Compose Post'}</div>
+        ${quotePreviewHtml}
         <form onsubmit="executePostTweet(event)">
-            <textarea id="postText" class="form-textarea" placeholder="What is happening?!" maxlength="280" required></textarea>
-            <div style="display:flex; justify-content:flex-end;">
+            <textarea id="postText" class="form-textarea" placeholder="${quotedTweet ? 'Add your comment...' : 'What is happening?!'}" maxlength="280" oninput="updateComposeCharCount()" required></textarea>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span id="postCharCount" style="font-size:12px; color:var(--text-muted);">0 / 280</span>
                 <button type="submit" id="postBtn" class="btn">Post</button>
             </div>
         </form>
@@ -3362,13 +4464,17 @@ function executePostTweet(e) {
     const btn = document.getElementById('postBtn');
     if (!text) return;
     const submitGeneration = viewGeneration;
+    const quoteTw = composeQuoteTweetId ? {
+        id: composeQuoteTweetId,
+        screenName: findTweetById(composeQuoteTweetId)?.user_screen_name || 'i'
+    } : null;
 
     if (btn) {
         btn.disabled = true;
         btn.innerHTML = 'Posting...';
     }
 
-    performPostMutation('CreateTweet', buildTweetVariables(text), ({ ok, error }) => {
+    performPostMutation('CreateTweet', buildTweetVariables(text, null, quoteTw), ({ ok, error }) => {
         const stillComposing = submitGeneration === viewGeneration && currentView === 'post';
         if (!ok || error) {
             if (stillComposing) alert('Post failed: ' + (error || 'Error'));
@@ -3376,8 +4482,317 @@ function executePostTweet(e) {
             if (btn) { btn.disabled = false; btn.innerHTML = 'Post'; }
             return;
         }
+        composeQuoteTweetId = null;
         showStatus('Post published', false, 2500);
         if (stillComposing) nav('feed');
+    });
+}
+
+function openProfile(screenName) {
+    const clean = String(screenName || '').replace(/^@+/, '').trim();
+    if (!clean) return;
+    profileState = {
+        screenName: clean,
+        user: null,
+        tab: 'tweets',
+        tweets: [],
+        cursor: null,
+        loading: true,
+        loadingMore: false,
+        error: ''
+    };
+    nav('profile');
+}
+
+function openOwnProfile() {
+    if (viewerIdentity?.screen_name) {
+        openProfile(viewerIdentity.screen_name);
+        return;
+    }
+    if (!appConfig.auth_token || !appConfig.ct0) {
+        nav('settings');
+        return;
+    }
+    showStatus('Loading your profile…', false, 2000);
+    prepareXTransaction((err) => {
+        if (!err && viewerIdentity?.screen_name) {
+            openProfile(viewerIdentity.screen_name);
+        } else {
+            showStatus('Could not detect your handle yet. Tap any @username or search from:@you.', true, 4000);
+        }
+    });
+}
+
+function parseUserProfileResult(jsonStr) {
+    let data;
+    try { data = JSON.parse(jsonStr); } catch (_) { return null; }
+    let u = data?.data?.user?.result || null;
+    if (!u || u.__typename === 'UserUnavailable') return null;
+    if (u.__typename === 'UserWithVisibilityResults') u = u.user || u;
+    const core = u.core || {};
+    const legacy = u.legacy || {};
+    const id = String(u.rest_id || legacy.id_str || '');
+    const screenName = core.screen_name || legacy.screen_name || '';
+    if (!id && !screenName) return null;
+    return {
+        id,
+        name: decodeHtmlEntities(core.name || legacy.name || screenName),
+        screen_name: screenName,
+        bio: decodeHtmlEntities(u.profile_bio?.description || legacy.description || ''),
+        location: decodeHtmlEntities(u.location?.location || legacy.location || ''),
+        avatar: u.avatar?.image_url || legacy.profile_image_url_https || '',
+        banner: u.banner?.image_url || legacy.profile_banner_url || '',
+        followers: Number(u.relationship_counts?.followers ?? legacy.followers_count) || 0,
+        following_count: Number(u.relationship_counts?.following ?? legacy.friends_count) || 0,
+        tweets_count: Number(u.tweet_counts?.tweets ?? legacy.statuses_count) || 0,
+        following: !!(u.relationship_perspectives?.following ?? legacy.following),
+        followed_by: !!(u.relationship_perspectives?.followed_by ?? legacy.followed_by),
+        verified: !!(u.is_blue_verified || legacy.verified)
+    };
+}
+
+function renderProfileShell(container) {
+    const u = profileState?.user;
+    const handle = u?.screen_name || profileState?.screenName || '';
+    const isSelf = !!(viewerIdentity?.screen_name && handle.toLowerCase() === viewerIdentity.screen_name.toLowerCase());
+    let headerCard = '';
+    if (u) {
+        const bannerHtml = (appConfig.image_mode === 'auto' && u.banner)
+            ? `<img class="profile-banner" src="${localImageUrl(u.banner, supportsRichModeNative() ? 'rich' : 'hd')}" alt="" onerror="this.remove()" />`
+            : `<div class="profile-banner"></div>`;
+        const avatarMode = appConfig.image_mode === 'off' ? 'off' : 'normal';
+        const avatarUrl = avatarVariantUrl(u.avatar, avatarMode);
+        const initial = escapeHtml((u.name || u.screen_name || 'X')[0].toUpperCase());
+        const avatarHtml = `<span class="tweet-avatar profile-avatar"><span>${initial}</span>${avatarUrl ? `<img class="tweet-avatar-img" src="${localImageUrl(avatarUrl, 'thumb')}" alt="" onload="this.style.opacity='1'" onerror="this.remove()" />` : ''}</span>`;
+        const followBtn = !isSelf && u.id
+            ? `<button type="button" id="followToggleBtn" class="btn ${u.following ? 'btn-secondary' : ''}" onclick="toggleFollowUser('${escapeHtml(u.id)}')">${u.following ? 'Following' : 'Follow'}</button>`
+            : `<button type="button" class="btn btn-secondary" onclick="searchTag('from:${escapeHtml(u.screen_name)}')">Search Posts</button>`;
+        const verifiedBadge = u.verified ? '<span class="verified-badge" title="Verified">&#10003;</span>' : '';
+        headerCard = `
+        ${bannerHtml}
+        <div class="profile-card">
+            <div class="profile-top">
+                ${avatarHtml}
+                ${followBtn}
+            </div>
+            <div style="font-size:19px; font-weight:800;">${escapeHtml(u.name)}${verifiedBadge}</div>
+            <div style="font-size:14px; color:var(--text-muted);">@${escapeHtml(u.screen_name)}${u.followed_by ? ' · Follows you' : ''}</div>
+            ${u.bio ? `<div style="font-size:14px; margin-top:8px; white-space:pre-wrap;">${linkify(u.bio)}</div>` : ''}
+            ${u.location ? `<div style="font-size:13px; color:var(--text-muted); margin-top:6px;">📍 ${escapeHtml(u.location)}</div>` : ''}
+            <div class="profile-stats">
+                <span><strong>${formatCount(u.following_count)}</strong> Following</span>
+                <span><strong>${formatCount(u.followers)}</strong> Followers</span>
+                <span><strong>${formatCount(u.tweets_count)}</strong> Posts</span>
+            </div>
+        </div>`;
+    } else {
+        headerCard = `
+        <div class="profile-card" style="padding-top:14px;">
+            <div style="font-size:18px; font-weight:800;">@${escapeHtml(handle)}</div>
+            <div style="font-size:13px; color:var(--text-muted); margin-top:4px;">${profileState?.loading ? 'Loading profile…' : escapeHtml(profileState?.error || 'Profile details unavailable')}</div>
+        </div>`;
+    }
+
+    const tabsHtml = `
+    <div class="nav-tabs" style="position:static; border-bottom:1px solid var(--border);">
+        <div class="nav-tab ${profileState?.tab !== 'replies' ? 'active' : ''}" onclick="switchProfileTab('tweets')">Posts</div>
+        <div class="nav-tab ${profileState?.tab === 'replies' ? 'active' : ''}" onclick="switchProfileTab('replies')">Replies</div>
+    </div>`;
+
+    let bodyHtml = '';
+    if (profileState?.loading && !profileState.tweets.length) {
+        bodyHtml = '<div class="spinner">Loading posts...</div>';
+    } else if (profileState?.error && !profileState.tweets.length) {
+        bodyHtml = `<div class="card"><div class="card-title" style="color:var(--red);">Could not load profile</div><p class="card-desc">${escapeHtml(profileState.error)}</p><button type="button" class="btn btn-secondary" onclick="searchTag('from:${escapeHtml(handle)}')">View in Search</button></div>`;
+    } else if (!profileState?.tweets?.length) {
+        bodyHtml = '<div class="card"><p class="card-desc">No posts found for this user.</p></div>';
+    } else {
+        bodyHtml = profileState.tweets.map(renderTweetHtml).join('');
+        if (profileState.cursor) {
+            bodyHtml += `<div class="load-more-box"><button type="button" id="profileMoreBtn" class="btn btn-secondary btn-block" style="padding:10px;" onclick="loadMoreProfileTweets()" ${profileState.loadingMore ? 'disabled' : ''}>${profileState.loadingMore ? 'Loading...' : 'Load More'}</button></div>`;
+        }
+    }
+
+    container.innerHTML = `
+    <div class="sub-header">
+        <button type="button" class="back-btn" onclick="restoreFeedView(currentFeedOrigin || currentTab, false)">&larr;</button>
+        <span>${u ? escapeHtml(u.name) : '@' + escapeHtml(handle)}</span>
+    </div>
+    ${headerCard}
+    ${tabsHtml}
+    <div id="profileFeedBox">${bodyHtml}</div>`;
+    initVideoAutoPauseObserver(container);
+}
+
+function renderProfileView() {
+    const container = document.getElementById('mainContent');
+    if (!profileState || !profileState.screenName) {
+        openOwnProfile();
+        return;
+    }
+    const gen = viewGeneration;
+    renderProfileShell(container);
+
+    const vars = { screen_name: profileState.screenName, withGuxResearchUserId: true };
+    const path = `/i/api/graphql/AMIBMjtxEEATh4z8V9GtRg/UserByScreenName?variables=${encodeURIComponent(JSON.stringify(vars))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
+    performSignedGet(path, (resStr) => {
+        if (gen !== viewGeneration || currentView !== 'profile') return;
+        const user = parseUserProfileResult(resStr);
+        if (!user || !user.id) {
+            profileState.loading = false;
+            profileState.error = 'Profile unavailable or suspended.';
+            renderProfileShell(container);
+            return;
+        }
+        profileState.user = user;
+        renderProfileShell(container);
+        fetchProfileTimeline(gen, false);
+    });
+}
+
+function switchProfileTab(tab) {
+    if (!profileState || profileState.tab === tab) return;
+    profileState.tab = tab;
+    profileState.tweets = [];
+    profileState.cursor = null;
+    profileState.loading = true;
+    profileState.error = '';
+    const gen = ++viewGeneration;
+    renderProfileShell(document.getElementById('mainContent'));
+    if (profileState.user?.id) fetchProfileTimeline(gen, false);
+}
+
+function loadMoreProfileTweets() {
+    if (!profileState || !profileState.cursor || profileState.loadingMore || !profileState.user?.id) return;
+    profileState.loadingMore = true;
+    const btn = document.getElementById('profileMoreBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Loading...'; }
+    fetchProfileTimeline(viewGeneration, true);
+}
+
+function fetchProfileTimeline(gen, isPaging) {
+    if (!profileState?.user?.id) return;
+    const isReplies = profileState.tab === 'replies';
+    const qId = isReplies ? 'FmuxExUC21Xn_C2NwtX5sQ' : 'D6z-FJI2pKuwEeYYxVIGbg';
+    const op = isReplies ? 'UserTweetsAndReplies' : 'UserTweets';
+    const vars = {
+        userId: profileState.user.id,
+        count: getFeedPageSize(),
+        includePromotedContent: false,
+        withQuickPromoteEligibilityTweetFields: false,
+        withVoice: true,
+        withV2Timeline: true
+    };
+    if (isReplies) vars.withCommunity = true;
+    if (isPaging && profileState.cursor) vars.cursor = profileState.cursor;
+    const path = `/i/api/graphql/${qId}/${op}?variables=${encodeURIComponent(JSON.stringify(vars))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}`;
+    performSignedGet(path, (resStr) => {
+        if (gen !== viewGeneration || currentView !== 'profile') return;
+        profileState.loading = false;
+        profileState.loadingMore = false;
+        const parsed = parseTwitterGraphql(resStr);
+        if (parsed.error && !parsed.tweets.length) {
+            profileState.error = parsed.error;
+        } else {
+            const existing = new Set(profileState.tweets.map(t => t.id));
+            const added = (parsed.tweets || []).filter(t => t && !existing.has(t.id) && existing.add(t.id));
+            if (isPaging) profileState.tweets.push(...added);
+            else profileState.tweets = parsed.tweets || [];
+            profileState.cursor = parsed.nextCursor || null;
+            profileState.error = '';
+        }
+        renderProfileShell(document.getElementById('mainContent'));
+    });
+}
+
+function toggleFollowUser(userId) {
+    if (!profileState?.user || String(profileState.user.id) !== String(userId)) return;
+    if (!supportsSignedPostTimelines()) {
+        showStatus('Update to v1.0.22 APK to follow accounts in-app.', true, 3500);
+        return;
+    }
+    const u = profileState.user;
+    const prev = !!u.following;
+    const target = !prev;
+    u.following = target;
+    u.followers = Math.max(0, u.followers + (target ? 1 : -1));
+    renderProfileShell(document.getElementById('mainContent'));
+    const endpoint = target ? '/i/api/1.1/friendships/create.json' : '/i/api/1.1/friendships/destroy.json';
+    performSignedFormPost(endpoint, 'user_id=' + encodeURIComponent(String(userId)), (resStr) => {
+        let ok = false;
+        try {
+            const parsed = JSON.parse(resStr);
+            ok = !parsed.error && !parsed.errors;
+        } catch (_) {}
+        if (!ok) {
+            u.following = prev;
+            u.followers = Math.max(0, u.followers + (prev ? 1 : -1));
+            showStatus('Follow action failed. Try again.', true, 3500);
+            if (currentView === 'profile') renderProfileShell(document.getElementById('mainContent'));
+        } else {
+            showStatus(target ? 'Followed @' + u.screen_name : 'Unfollowed @' + u.screen_name, false, 2000);
+        }
+    });
+}
+
+function renderNotifications() {
+    const container = document.getElementById('mainContent');
+    const gen = viewGeneration;
+    container.innerHTML = `
+    <div class="sub-header">
+        <button type="button" class="back-btn" onclick="restoreFeedView(currentFeedOrigin || currentTab, false)">&larr;</button>
+        <span>Notifications</span>
+    </div>
+    <div id="notifListBox"><div class="spinner">Loading notifications...</div></div>`;
+
+    const path = '/i/api/2/notifications/all.json?count=30&tweet_mode=extended&include_profile_interstitial_type=1&include_blocking=1&include_blocked_by=1&include_followed_by=1&include_want_retweets=1&include_mute_edge=1&include_can_dm=1&include_ext_has_nft_avatar=1&include_ext_is_blue_verified=1&include_ext_verified_type=1&include_ext_profile_image_shape=1&skip_status=1';
+    performSignedGet(path, (resStr) => {
+        if (gen !== viewGeneration || currentView !== 'notifications') return;
+        const box = document.getElementById('notifListBox');
+        if (!box) return;
+        let data;
+        try { data = JSON.parse(resStr); } catch (_) { data = null; }
+        if (!data || data.error || !data.globalObjects) {
+            box.innerHTML = `<div class="card"><div class="card-title" style="color:var(--red);">Could not load alerts</div><p class="card-desc">${escapeHtml(data?.message || data?.errors?.[0]?.message || 'Check connection and retry.')}</p><button type="button" class="btn btn-secondary" onclick="renderNotifications()">Retry</button></div>`;
+            return;
+        }
+        const go = data.globalObjects;
+        const users = go.users || {};
+        const rawTweets = go.tweets || {};
+        for (const tid in rawTweets) {
+            const tw = rawTweets[tid];
+            if (tw && !tw.user) tw.user = users[tw.user_id_str] || {};
+            parseSingleTweet(tw);
+        }
+        const items = Object.values(go.notifications || {}).sort((a, b) => Number(b.timestampMs || 0) - Number(a.timestampMs || 0));
+        if (!items.length) {
+            box.innerHTML = '<div class="card"><p class="card-desc">No recent notifications.</p></div>';
+            return;
+        }
+        const iconMap = { reply_icon: '💬', heart_icon: '♥', retweet_icon: '⇄', person_icon: '👤', bird_icon: '𝕏', bell_icon: '🔔' };
+        box.innerHTML = items.map(n => {
+            const msg = decodeHtmlEntities(n.message?.text || '');
+            const iconKey = n.icon?.id || '';
+            const icon = iconMap[iconKey] || '🔔';
+            const tpl = n.template?.aggregateUserActionsV1 || {};
+            const targetTweetId = tpl.targetObjects?.[0]?.tweet?.id || n.targetObjects?.[0]?.tweet?.id || '';
+            const firstUid = tpl.fromUsers?.[0]?.user?.id || '';
+            const firstUser = users[firstUid] || null;
+            const targetTweet = targetTweetId ? findTweetById(targetTweetId) : null;
+            const timeTxt = n.timestampMs ? formatRelativeTime(Number(n.timestampMs)) : '';
+            const clickAction = targetTweetId
+                ? `viewThread('${escapeHtml(targetTweetId)}')`
+                : (firstUser?.screen_name ? `openProfile('${escapeHtml(firstUser.screen_name)}')` : '');
+            const iconColor = iconKey === 'heart_icon' ? '#f91880' : (iconKey === 'retweet_icon' ? '#00ba7c' : 'var(--accent)');
+            return `
+            <div class="notif-row" ${clickAction ? `onclick="${clickAction}"` : ''}>
+                <div class="notif-icon" style="color:${iconColor};">${icon}</div>
+                <div style="flex:1; min-width:0;">
+                    <div style="font-size:14px; font-weight:600;">${escapeHtml(msg)} ${timeTxt ? `<span style="color:var(--text-muted); font-weight:400;">· ${escapeHtml(timeTxt)}</span>` : ''}</div>
+                    ${targetTweet?.text ? `<div style="font-size:13px; color:var(--text-muted); margin-top:4px; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;">${escapeHtml(targetTweet.text)}</div>` : ''}
+                </div>
+            </div>`;
+        }).join('');
     });
 }
 
@@ -3386,6 +4801,7 @@ function renderSettings() {
     let cookies = { auth_token: '', ct0: '', image_mode: 'tap' };
     let avatarMode = readSavedAvatarMode();
     let hideAds = readSavedHideAds();
+    let syncSeen = readSavedSyncSeen();
     let isLive = false;
     let versionInfo = { version: APP_VERSION, build: APP_BUILD, isLive: false };
     let apkStatus = { downloading: false, canInstall: true, cachedVersion: null };
@@ -3489,7 +4905,7 @@ function renderSettings() {
                 </label>
                 <label style="display:block;">
                     <input type="radio" name="imgMode" value="auto" ${cookies.image_mode === 'auto' ? 'checked' : ''}>
-                    Auto-load previews (uses more data)
+                    Auto-load previews (rich photos, videos &amp; auto-scroll; uses more data)
                 </label>
                 <label style="display:block;">
                     <input type="radio" name="imgMode" value="off" ${cookies.image_mode === 'off' ? 'checked' : ''}>
@@ -3525,6 +4941,18 @@ function renderSettings() {
                 </label>
             </div>
 
+            <div class="card-title" style="font-size:15px; margin: 16px 0 6px;">Sync Seen Posts to X</div>
+            <div style="font-size:14px; line-height:2; margin-bottom:16px;">
+                <label style="display:block;">
+                    <input type="radio" name="syncSeen" value="true" ${syncSeen ? 'checked' : ''}>
+                    Report scrolled posts to X (reduces repeats on laptop &amp; phone)
+                </label>
+                <label style="display:block;">
+                    <input type="radio" name="syncSeen" value="false" ${!syncSeen ? 'checked' : ''}>
+                    Do not report seen posts to X
+                </label>
+            </div>
+
             <button type="submit" class="btn btn-block">Save Configuration</button>
         </form>
     </div>
@@ -3544,15 +4972,20 @@ function saveSettings(e) {
     const mode = document.querySelector('input[name="imgMode"]:checked').value;
     const avatarMode = saveAvatarModePref(document.querySelector('input[name="avatarMode"]:checked')?.value || 'mini');
     const hideAds = saveHideAdsPref((document.querySelector('input[name="hideAds"]:checked')?.value || 'true') === 'true');
+    const syncSeen = saveSyncSeenPref((document.querySelector('input[name="syncSeen"]:checked')?.value || 'true') === 'true');
 
     if (window.AndroidBridge) {
         if (auth !== appConfig.auth_token || ct0 !== appConfig.ct0) {
             AndroidBridge.clearCache();
             AndroidBridge.saveCache('bookmarks', '[]');
             bookmarksCache = [];
+            viewerIdentity = null;
+            seenForYouIds.clear();
+            try { localStorage.removeItem(VIEWER_KEY); localStorage.removeItem(SEEN_FORYOU_KEY); } catch (_) {}
         }
         AndroidBridge.saveConfig(auth, ct0, mode);
-        appConfig = { auth_token: auth, ct0: ct0, image_mode: mode, avatar_mode: avatarMode, hide_ads: hideAds };
+        appConfig = { auth_token: auth, ct0: ct0, image_mode: mode, avatar_mode: avatarMode, hide_ads: hideAds, sync_seen: syncSeen };
+        updateHeaderActions();
         alert("Saved");
         nav('feed');
     }

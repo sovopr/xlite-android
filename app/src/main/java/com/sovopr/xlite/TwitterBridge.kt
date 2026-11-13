@@ -5,6 +5,8 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -15,6 +17,8 @@ import org.json.JSONObject
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.ConnectionPool
+import okhttp3.Dispatcher
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -24,6 +28,8 @@ import okhttp3.brotli.BrotliInterceptor
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -31,13 +37,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 class TwitterBridge(private val context: Context) {
 
     private val prefs: SharedPreferences = context.getSharedPreferences("xlite_prefs", Context.MODE_PRIVATE)
-    private val client: OkHttpClient = OkHttpClient.Builder()
+    private val jsonStoreDir = File(context.cacheDir, "json_store").apply { if (!exists()) mkdirs() }
+    private val pendingTempResults = ConcurrentHashMap<String, String>()
+    private val client: OkHttpClient = sharedBaseClient.newBuilder()
         .addInterceptor(BrotliInterceptor)
-        .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
-        .followRedirects(true)
         .build()
-    private val apkClient: OkHttpClient = OkHttpClient.Builder()
+    private val apkClient: OkHttpClient = sharedBaseClient.newBuilder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(90, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
@@ -45,7 +51,7 @@ class TwitterBridge(private val context: Context) {
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
-    private val requestExecutor = Executors.newSingleThreadExecutor()
+    private val requestExecutor = Executors.newCachedThreadPool()
     private val apkExecutor = Executors.newSingleThreadExecutor()
     private val apkDownloadInFlight = AtomicBoolean(false)
     @Volatile private var activeApkCall: Call? = null
@@ -55,12 +61,26 @@ class TwitterBridge(private val context: Context) {
     companion object {
         const val BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
         const val USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
-        private val ALLOWED_POST_PATH_REGEX = Regex("^/i/api/graphql/[A-Za-z0-9_-]+/(CreateTweet|FavoriteTweet|UnfavoriteTweet|CreateRetweet|DeleteRetweet|CreateBookmark|DeleteBookmark)$")
+        private val ALLOWED_POST_PATH_REGEX = Regex("^/i/api/graphql/[A-Za-z0-9_-]+/(CreateTweet|FavoriteTweet|UnfavoriteTweet|CreateRetweet|DeleteRetweet|CreateBookmark|DeleteBookmark|HomeTimeline|HomeLatestTimeline)$")
+        private val ALLOWED_FORM_POST_PATH_REGEX = Regex("^/i/api/1\\.1/(?:jot/client_event|friendships/(?:create|destroy))\\.json$")
+        private val ALLOWED_SIGNED_GET_PATH_REGEX = Regex("^/i/api/(?:graphql/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+|2/notifications/[A-Za-z0-9_.-]+\\.json)$")
         private val TRANSACTION_ID_REGEX = Regex("^[A-Za-z0-9+/]{80,120}$")
         private val ALLOWED_APK_PATH_REGEX = Regex("^/sovopr/xlite-android/releases/(?:latest/download|download/v[0-9]+\\.[0-9]+\\.[0-9]+)/xlite-fup-release\\.apk$")
         private val SEMVER_REGEX = Regex("^[0-9]+\\.[0-9]+\\.[0-9]+$")
         private const val MIN_APK_BYTES = 1_000_000L
         private const val MAX_APK_BYTES = 64L * 1024L * 1024L
+
+        internal val sharedBaseClient: OkHttpClient = OkHttpClient.Builder()
+            .connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
+            .dispatcher(Dispatcher().apply {
+                maxRequests = 64
+                maxRequestsPerHost = 16
+            })
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(45, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .retryOnConnectionFailure(true)
+            .build()
     }
 
     private fun buildRequest(url: String): Request {
@@ -107,18 +127,89 @@ class TwitterBridge(private val context: Context) {
             .apply()
     }
 
+    private fun storeFileForKey(key: String): File {
+        val safePrefix = key.replace(Regex("[^A-Za-z0-9_.-]"), "_").take(48)
+        val digest = MessageDigest.getInstance("SHA-256").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }.take(16)
+        return File(jsonStoreDir, "${safePrefix}_$digest.json")
+    }
+
+    @JavascriptInterface
+    fun takeTempResult(callbackId: String): String {
+        return pendingTempResults.remove(callbackId)
+            ?: getCache("temp_res_$callbackId").also { if (it.isNotEmpty()) prefs.edit().remove("cache_temp_res_$callbackId").apply() }
+    }
+
+    @JavascriptInterface
+    fun getConnectionProfile(): String {
+        return try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return "unknown"
+            val network = cm.activeNetwork ?: return "offline"
+            val caps = cm.getNetworkCapabilities(network) ?: return "offline"
+            when {
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "wifi"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
+                else -> "online"
+            }
+        } catch (_: Exception) { "unknown" }
+    }
+
     @JavascriptInterface
     fun saveCache(key: String, data: String) {
-        prefs.edit().putString("cache_$key", data).apply()
+        if (key.startsWith("temp_res_")) {
+            val cbId = key.removePrefix("temp_res_")
+            if (data.isEmpty()) pendingTempResults.remove(cbId) else pendingTempResults[cbId] = data
+            return
+        }
+        try {
+            val target = storeFileForKey(key)
+            if (data.isEmpty()) {
+                if (target.exists()) target.delete()
+            } else {
+                val tmp = File.createTempFile("store_", ".tmp", jsonStoreDir)
+                try {
+                    tmp.writeText(data, Charsets.UTF_8)
+                    tmp.renameTo(target)
+                } finally {
+                    tmp.delete()
+                }
+            }
+            if (prefs.contains("cache_$key")) {
+                prefs.edit().remove("cache_$key").apply()
+            }
+        } catch (_: Exception) {
+            prefs.edit().putString("cache_$key", data).apply()
+        }
     }
 
     @JavascriptInterface
     fun getCache(key: String): String {
-        return prefs.getString("cache_$key", "") ?: ""
+        if (key.startsWith("temp_res_")) {
+            val cbId = key.removePrefix("temp_res_")
+            return pendingTempResults[cbId] ?: (prefs.getString("cache_$key", "") ?: "")
+        }
+        return try {
+            val target = storeFileForKey(key)
+            if (target.exists()) {
+                target.readText(Charsets.UTF_8)
+            } else {
+                val legacy = prefs.getString("cache_$key", "") ?: ""
+                if (legacy.isNotEmpty()) saveCache(key, legacy)
+                legacy
+            }
+        } catch (_: Exception) {
+            prefs.getString("cache_$key", "") ?: ""
+        }
     }
 
     @JavascriptInterface
     fun clearCache() {
+        pendingTempResults.clear()
+        jsonStoreDir.listFiles()?.forEach { file ->
+            if (file.name.startsWith("feed_") || file.name.startsWith("seen_")) {
+                try { file.delete() } catch (_: Exception) {}
+            }
+        }
         val editor = prefs.edit()
         for (k in prefs.all.keys) {
             if (k.startsWith("cache_feed_") || k.startsWith("cache_temp_res_")) {
@@ -157,33 +248,69 @@ class TwitterBridge(private val context: Context) {
     }
 
     @JavascriptInterface
-    fun executeSearchGetAsync(url: String, transactionId: String, callbackId: String) {
+    fun executeSignedGetAsync(url: String, transactionId: String, callbackId: String) {
         val parsed = url.toHttpUrlOrNull()
-        val validSearchUrl = parsed?.isHttps == true && parsed.host == "x.com" &&
-            Regex("^/i/api/graphql/[A-Za-z0-9_-]+/SearchTimeline$").matches(parsed.encodedPath)
-        val validId = Regex("^[A-Za-z0-9+/]{90,110}$").matches(transactionId)
-        if (!validSearchUrl || !validId) {
-            saveCache("temp_res_$callbackId", errorPayload("Invalid search request"))
-            (context as? MainActivity)?.dispatchJsCallback(callbackId)
+        val validUrl = parsed?.isHttps == true && parsed.host == "x.com" &&
+            ALLOWED_SIGNED_GET_PATH_REGEX.matches(parsed.encodedPath)
+        if (!validUrl || !TRANSACTION_ID_REGEX.matches(transactionId)) {
+            finishAsyncRequest(callbackId, errorPayload("Invalid signed request"))
             return
+        }
+        val referer = when {
+            parsed!!.encodedPath.startsWith("/i/api/2/notifications/") -> "https://x.com/notifications"
+            parsed.encodedPath.contains("/SearchTimeline") -> "https://x.com/search"
+            else -> "https://x.com/home"
         }
         requestExecutor.execute {
             try {
                 val request = buildRequest(url).newBuilder()
                     .header("x-client-transaction-id", transactionId)
                     .header("x-twitter-auth-type", "OAuth2Session")
-                    .header("referer", "https://x.com/search")
+                    .header("referer", referer)
                     .build()
                 runAsyncRequest(request, callbackId)
             } catch (e: Exception) {
-                saveCache("temp_res_$callbackId", errorPayload(e.message ?: "Search request failed"))
-                (context as? MainActivity)?.dispatchJsCallback(callbackId)
+                finishAsyncRequest(callbackId, errorPayload(e.message ?: "Request failed"))
             }
         }
     }
 
+    @JavascriptInterface
+    fun executeSearchGetAsync(url: String, transactionId: String, callbackId: String) {
+        executeSignedGetAsync(url, transactionId, callbackId)
+    }
+
+    @JavascriptInterface
+    fun executeFormPostWithTransactionAsync(url: String, formBody: String, transactionId: String, callbackId: String) {
+        val parsedUrl = url.toHttpUrlOrNull()
+        val validUrl = parsedUrl?.isHttps == true && parsedUrl.host == "x.com" &&
+            ALLOWED_FORM_POST_PATH_REGEX.matches(parsedUrl.encodedPath)
+        if (!validUrl || !TRANSACTION_ID_REGEX.matches(transactionId)) {
+            finishAsyncRequest(callbackId, errorPayload("Unsupported form post URL"))
+            return
+        }
+        val authToken = prefs.getString("auth_token", "") ?: ""
+        val ct0 = prefs.getString("ct0", "") ?: ""
+        val mediaType = "application/x-www-form-urlencoded; charset=utf-8".toMediaType()
+        val request = Request.Builder()
+            .url(url)
+            .post(formBody.toRequestBody(mediaType))
+            .addHeader("authorization", "Bearer $BEARER_TOKEN")
+            .addHeader("x-csrf-token", ct0)
+            .addHeader("cookie", "auth_token=$authToken; ct0=$ct0")
+            .addHeader("user-agent", USER_AGENT)
+            .addHeader("content-type", "application/x-www-form-urlencoded")
+            .addHeader("x-twitter-active-user", "yes")
+            .addHeader("x-twitter-client-language", "en")
+            .addHeader("x-twitter-auth-type", "OAuth2Session")
+            .addHeader("x-client-transaction-id", transactionId)
+            .addHeader("referer", "https://x.com/home")
+            .build()
+        runAsyncRequest(request, callbackId)
+    }
+
     private fun finishAsyncRequest(callbackId: String, payload: String) {
-        saveCache("temp_res_$callbackId", payload)
+        pendingTempResults[callbackId] = payload
         (context as? MainActivity)?.dispatchJsCallback(callbackId)
     }
 

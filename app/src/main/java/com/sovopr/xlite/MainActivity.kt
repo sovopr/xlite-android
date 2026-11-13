@@ -6,8 +6,10 @@ import android.graphics.BitmapFactory
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.view.View
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.OnBackPressedCallback
@@ -19,22 +21,36 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.security.MessageDigest
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var bridge: TwitterBridge
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
+    private val client = TwitterBridge.sharedBaseClient.newBuilder()
         .readTimeout(45, TimeUnit.SECONDS)
         .build()
-    private val hdPrimaryClient = client.newBuilder()
+    private val richClient = TwitterBridge.sharedBaseClient.newBuilder()
+        .readTimeout(25, TimeUnit.SECONDS)
+        .build()
+    private val hdPrimaryClient = TwitterBridge.sharedBaseClient.newBuilder()
         .readTimeout(35, TimeUnit.SECONDS)
         .build()
-    private val hdFallbackClient = client.newBuilder()
+    private val hdFallbackClient = TwitterBridge.sharedBaseClient.newBuilder()
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
+    private val cacheCleanupExecutor = Executors.newSingleThreadExecutor()
+    private val cacheWritesCount = AtomicInteger(0)
+
+    companion object {
+        private const val MAX_DISK_IMAGE_CACHE_BYTES = 80L * 1024L * 1024L
+        private val IMAGE_RESPONSE_HEADERS = mapOf(
+            "Cache-Control" to "public, max-age=604800",
+            "Access-Control-Allow-Origin" to "*"
+        )
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,6 +60,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(webView)
 
         webView.setBackgroundColor(0xFF000000.toInt())
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         val settings = webView.settings
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
@@ -51,6 +68,8 @@ class MainActivity : AppCompatActivity() {
         settings.allowContentAccess = true
         settings.allowFileAccessFromFileURLs = false
         settings.allowUniversalAccessFromFileURLs = false
+        settings.mediaPlaybackRequiresUserGesture = false
+        settings.cacheMode = WebSettings.LOAD_DEFAULT
 
         bridge = TwitterBridge(this)
         webView.addJavascriptInterface(bridge, "AndroidBridge")
@@ -193,18 +212,33 @@ class MainActivity : AppCompatActivity() {
 
         if (cleanPath.startsWith("/media/")) {
             val baseBuilder = { imageUrl.buildUpon().path(cleanPath).clearQuery() }
-            return if (mode == "hd") {
-                listOf(
+            return when (mode) {
+                "hd" -> listOf(
+                    baseBuilder().appendQueryParameter("format", "webp").appendQueryParameter("name", "large").build().toString(),
                     baseBuilder().appendQueryParameter("format", "webp").appendQueryParameter("name", "medium").build().toString(),
                     baseBuilder().appendQueryParameter("format", baseFormat).appendQueryParameter("name", "medium").build().toString(),
                     baseBuilder().appendQueryParameter("format", "webp").appendQueryParameter("name", "small").build().toString(),
                     baseBuilder().appendQueryParameter("format", baseFormat).appendQueryParameter("name", "small").build().toString()
                 ).distinct()
-            } else {
-                listOf(
+                "rich" -> listOf(
+                    baseBuilder().appendQueryParameter("format", "webp").appendQueryParameter("name", "small").build().toString(),
+                    baseBuilder().appendQueryParameter("format", baseFormat).appendQueryParameter("name", "small").build().toString(),
+                    baseBuilder().appendQueryParameter("format", "webp").appendQueryParameter("name", "medium").build().toString(),
+                    baseBuilder().appendQueryParameter("format", baseFormat).appendQueryParameter("name", "medium").build().toString()
+                ).distinct()
+                else -> listOf(
                     baseBuilder().appendQueryParameter("format", "webp").appendQueryParameter("name", "thumb").build().toString(),
                     baseBuilder().appendQueryParameter("format", baseFormat).appendQueryParameter("name", "thumb").build().toString()
                 ).distinct()
+            }
+        }
+
+        if (cleanPath.startsWith("/profile_banners/")) {
+            val pathUrl = { p: String -> imageUrl.buildUpon().path(p).clearQuery().build().toString() }
+            return if (Regex("/\\d+x\\d+$").containsMatchIn(cleanPath)) {
+                listOf(imageUrl.toString())
+            } else {
+                listOf(pathUrl("$cleanPath/600x200"), pathUrl(cleanPath)).distinct()
             }
         }
 
@@ -213,14 +247,19 @@ class MainActivity : AppCompatActivity() {
             cleanPath.startsWith("/tweet_video_thumb/")
         if (isVideoThumb) {
             val pathUrl = { p: String -> imageUrl.buildUpon().path(p).clearQuery().build().toString() }
-            return if (mode == "hd") {
-                listOf(
+            return when (mode) {
+                "hd" -> listOf(
+                    pathUrl("$cleanPath:large"),
                     pathUrl("$cleanPath:medium"),
                     pathUrl("$cleanPath:small"),
                     pathUrl(cleanPath)
                 ).distinct()
-            } else {
-                listOf(
+                "rich" -> listOf(
+                    pathUrl("$cleanPath:medium"),
+                    pathUrl("$cleanPath:small"),
+                    pathUrl(cleanPath)
+                ).distinct()
+                else -> listOf(
                     pathUrl("$cleanPath:thumb"),
                     pathUrl(cleanPath)
                 ).distinct()
@@ -230,49 +269,128 @@ class MainActivity : AppCompatActivity() {
         return listOf(imageUrl.toString())
     }
 
+    private fun detectImageMime(bytes: ByteArray, fallbackFormat: String = "webp"): String {
+        if (bytes.size >= 12 &&
+            bytes[0] == 'R'.code.toByte() && bytes[1] == 'I'.code.toByte() &&
+            bytes[2] == 'F'.code.toByte() && bytes[3] == 'F'.code.toByte() &&
+            bytes[8] == 'W'.code.toByte() && bytes[9] == 'E'.code.toByte() &&
+            bytes[10] == 'B'.code.toByte() && bytes[11] == 'P'.code.toByte()
+        ) {
+            return "image/webp"
+        }
+        if (bytes.size >= 4 &&
+            bytes[0] == 0x89.toByte() && bytes[1] == 'P'.code.toByte() &&
+            bytes[2] == 'N'.code.toByte() && bytes[3] == 'G'.code.toByte()
+        ) {
+            return "image/png"
+        }
+        if (bytes.size >= 3 &&
+            bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte()
+        ) {
+            return "image/jpeg"
+        }
+        return when (fallbackFormat) {
+            "png" -> "image/png"
+            "jpg", "jpeg" -> "image/jpeg"
+            else -> "image/webp"
+        }
+    }
+
+    private fun detectImageMimeFromFile(file: File): String {
+        val header = ByteArray(12)
+        return try {
+            FileInputStream(file).use { input ->
+                val read = input.read(header)
+                if (read > 0) detectImageMime(header.copyOf(read)) else "image/webp"
+            }
+        } catch (_: Exception) { "image/webp" }
+    }
+
+    private fun writeImageCacheFile(cacheDir: File, cacheFile: File, bytes: ByteArray) {
+        try {
+            val tempFile = File.createTempFile("image-", ".tmp", cacheDir)
+            try {
+                tempFile.writeBytes(bytes)
+                tempFile.renameTo(cacheFile)
+            } finally {
+                tempFile.delete()
+            }
+            if (cacheWritesCount.incrementAndGet() % 30 == 0) {
+                cacheCleanupExecutor.execute { trimDiskCacheIfNeeded(cacheDir, MAX_DISK_IMAGE_CACHE_BYTES) }
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun trimDiskCacheIfNeeded(cacheDir: File, maxBytes: Long) {
+        try {
+            val files = cacheDir.listFiles()?.filter { it.isFile && !it.name.endsWith(".tmp") } ?: return
+            var total = files.sumOf { it.length() }
+            if (total <= maxBytes) return
+            val target = (maxBytes * 7) / 10
+            for (f in files.sortedBy { it.lastModified() }) {
+                if (total <= target) break
+                val len = f.length()
+                if (f.delete()) total -= len
+            }
+        } catch (_: Exception) {}
+    }
+
     private fun handleImageRequest(targetUrl: String, mode: String, cacheDir: File): WebResourceResponse? {
         val imageUrl = try { Uri.parse(targetUrl) } catch (_: Exception) { return null }
         if (imageUrl.scheme != "https" || imageUrl.host != "pbs.twimg.com") return null
-        if (mode != "thumb" && mode != "hd") return null
+        if (mode !in setOf("thumb", "rich", "hd")) return null
         val hash = sha256("$targetUrl-$mode")
-        val cacheFile = File(cacheDir, "$hash.webp")
+        val cacheFile = File(cacheDir, "$hash.img")
+        val legacyCacheFile = File(cacheDir, "$hash.webp")
 
-        if (cacheFile.exists()) {
-            try {
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeFile(cacheFile.absolutePath, bounds)
-                if (bounds.outWidth > 0 && bounds.outHeight > 0) {
-                    return WebResourceResponse("image/webp", "UTF-8", FileInputStream(cacheFile))
-                }
-            } catch (_: Exception) { }
-            cacheFile.delete()
+        val existingCache = when {
+            cacheFile.exists() && cacheFile.length() > 16 -> cacheFile
+            legacyCacheFile.exists() && legacyCacheFile.length() > 16 -> legacyCacheFile
+            else -> null
+        }
+        if (existingCache != null) {
+            val mime = detectImageMimeFromFile(existingCache)
+            return WebResourceResponse(mime, null, 200, "OK", IMAGE_RESPONSE_HEADERS, FileInputStream(existingCache))
         }
 
         return try {
-            // Fetch X's small/webp variant over cellular. Recompressing an original after
-            // downloading it does not save any mobile data.
             val cleanLastSegment = (imageUrl.lastPathSegment ?: "")
                 .replace(Regex(":(thumb|small|medium|large|orig)$"), "")
+            val isBannerOrCard = cleanLastSegment.isNotEmpty() &&
+                ((imageUrl.path ?: "").startsWith("/profile_banners/") || (imageUrl.path ?: "").startsWith("/card_img/"))
             val imageFormat = (imageUrl.getQueryParameter("format")
-                ?: cleanLastSegment.substringAfterLast('.', "jpg"))
+                ?: cleanLastSegment.substringAfterLast('.', if (isBannerOrCard) "jpg" else "jpg"))
                 .lowercase()
-            if (imageFormat !in setOf("jpg", "jpeg", "png", "webp")) return null
+            if (!isBannerOrCard && imageFormat !in setOf("jpg", "jpeg", "png", "webp")) return null
 
-            val maxBytes = if (mode == "hd") 1024 * 1024 else 256 * 1024
+            val maxBytes = when (mode) {
+                "hd" -> 2560 * 1024
+                "rich" -> 1536 * 1024
+                else -> 256 * 1024
+            }
             val candidates = buildImageCandidateUrls(imageUrl, mode, imageFormat)
             var rawBytes: ByteArray? = null
             for ((index, candidate) in candidates.withIndex()) {
                 val activeClient = when {
-                    mode != "hd" -> client
-                    index < 2 -> hdPrimaryClient
-                    else -> hdFallbackClient
+                    mode == "hd" && index < 2 -> hdPrimaryClient
+                    mode == "hd" -> hdFallbackClient
+                    mode == "rich" -> richClient
+                    else -> client
                 }
                 rawBytes = fetchImageBytes(activeClient, candidate, maxBytes)
                 if (rawBytes != null) break
             }
             if (rawBytes == null) return null
 
-            val maxDim = if (mode == "hd") 900 else 380
+            // Rich mode and well-sized images pass through without CPU recompression for fast scrolling & sharp pixels.
+            val rawMime = detectImageMime(rawBytes, imageFormat)
+            val passThrough = mode == "rich" || (mode == "hd" && rawBytes.size <= 380 * 1024 && rawMime in setOf("image/webp", "image/jpeg"))
+            if (passThrough) {
+                writeImageCacheFile(cacheDir, cacheFile, rawBytes)
+                return WebResourceResponse(rawMime, null, 200, "OK", IMAGE_RESPONSE_HEADERS, ByteArrayInputStream(rawBytes))
+            }
+
+            val maxDim = if (mode == "hd") 1440 else 380
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, bounds)
             var sampleSize = 1
@@ -290,7 +408,7 @@ class MainActivity : AppCompatActivity() {
                 original
             }
 
-            val quality = if (mode == "hd") 65 else 32
+            val quality = if (mode == "hd") 82 else 32
             val bos = ByteArrayOutputStream()
 
             @Suppress("DEPRECATION")
@@ -303,17 +421,8 @@ class MainActivity : AppCompatActivity() {
             val webpBytes = bos.toByteArray()
             if (webpBytes.isEmpty()) return null
 
-            try {
-                val tempFile = File.createTempFile("image-", ".tmp", cacheDir)
-                try {
-                    tempFile.writeBytes(webpBytes)
-                    tempFile.renameTo(cacheFile)
-                } finally {
-                    tempFile.delete()
-                }
-            } catch (_: Exception) {}
-
-            WebResourceResponse("image/webp", "UTF-8", ByteArrayInputStream(webpBytes))
+            writeImageCacheFile(cacheDir, cacheFile, webpBytes)
+            WebResourceResponse("image/webp", null, 200, "OK", IMAGE_RESPONSE_HEADERS, ByteArrayInputStream(webpBytes))
         } catch (e: Exception) {
             null
         }

@@ -79,7 +79,7 @@ const parsed = vm.runInContext(`parseSingleTweet(${JSON.stringify({
             { content_type: 'video/mp4', bitrate: 1000, url: 'https://evil.example/track.mp4' }
         ] } }] } }
 })})`, context);
-assert.equal(parsed.media[0].video_url, undefined, 'video URLs are not carried into feed cards');
+assert.equal(parsed.media[0].video_url, high, 'valid video.twimg.com MP4 is available for Auto mode');
 assert.equal(parsed.media[0].duration_ms, 4900);
 assert.equal(parsed.media[0].alt_text, 'A giant monster near a bridge');
 assert.equal(vm.runInContext(`mediaPreviewUrl(${JSON.stringify(poster)}, true)`, context), `${poster}:thumb?format=jpg`);
@@ -98,8 +98,22 @@ assert.match(textOnly, /A giant monster near a bridge/, 'description remains ava
 assert.doesNotMatch(textOnly, /<img|\.mp4/);
 vm.runInContext("appConfig.image_mode = 'auto'", context);
 const autoPreview = vm.runInContext(`renderTweetHtml(${JSON.stringify(parsed)})`, context);
-assert.match(autoPreview, /%3Athumb%3Fformat%3Djpg/, 'automatic mode requests the small poster');
-assert.match(autoPreview, /retryOriginalPreview\(this\)/, 'failed thumbnail can fall back once');
+assert.match(autoPreview, /<video\b[^>]*controls playsinline/, 'automatic mode renders inline video player');
+assert.match(autoPreview, /poster="https:\/\/local\.xlite\/img\?url=[^"]*%3Athumb%3Fformat%3Djpg[^"]*mode=thumb"/, 'automatic mode requests the small poster');
+assert.match(autoPreview, /src="https:\/\/video\.twimg\.com\/ext_tw_video\/test\/high\.mp4"/);
+assert.doesNotMatch(autoPreview, /evil\.example/, 'untrusted MP4 origins are stripped');
+
+const evilOnlyParsed = vm.runInContext(`parseSingleTweet(${JSON.stringify({
+    rest_id: '124',
+    legacy: { full_text: 'Untrusted host', extended_entities: { media: [{
+        media_url_https: poster, type: 'video', video_info: { variants: [
+            { content_type: 'video/mp4', bitrate: 800000, url: 'https://evil.example/track.mp4' }
+        ] } }] } }
+})})`, context);
+assert.equal(evilOnlyParsed.media[0].video_url, undefined, 'untrusted video domains are never kept');
+const evilFallbackHtml = vm.runInContext(`renderTweetHtml(${JSON.stringify(evilOnlyParsed)})`, context);
+assert.match(evilFallbackHtml, /retryOriginalPreview\(this\)/, 'fallback poster image keeps retry support');
+assert.doesNotMatch(evilFallbackHtml, /<video\b|\.mp4/);
 vm.runInContext("appConfig.image_mode = 'tap'", context);
 
 cache.set('feed_following', JSON.stringify([{ id: 'old', text: 'Old cached post', media: [] }]));
@@ -537,6 +551,169 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
     assert.doesNotMatch(organicMarkup, /ad-badge/);
     assert.match(organicMarkup, /&amp;amp; &amp;lt;tag&amp;gt;/, 'User-typed literal entities remain literal');
     vm.runInContext("appConfig.hide_ads = true;", hdCtx);
+})();
+
+(() => {
+    // Rich Auto mode photos grid, lightbox, GIF autoplay, cards, polls, compact counts, and Seen sync
+    const richDom = new Map();
+    const richEl = (tag) => ({
+        tagName: tag,
+        innerHTML: '',
+        textContent: '',
+        style: {},
+        dataset: {},
+        _classes: new Set(),
+        classList: {
+            add(c) { this._parent._classes.add(c); },
+            remove(c) { this._parent._classes.delete(c); },
+            toggle(c, f) { if (f === undefined) { if (this._parent._classes.has(c)) this._parent._classes.delete(c); else this._parent._classes.add(c); } else if (f) this._parent._classes.add(c); else this._parent._classes.delete(c); },
+            contains(c) { return this._parent._classes.has(c); }
+        },
+        removeAttribute(name) { delete this[name]; },
+        insertAdjacentHTML(_pos, h) { this.innerHTML += h; },
+        querySelectorAll() { return []; },
+        querySelector() { return null; }
+    });
+    const makeRichEl = (id) => {
+        const el = richEl('div');
+        el.classList._parent = el;
+        richDom.set(id, el);
+        return el;
+    };
+    const rMain = makeRichEl('mainContent');
+    ['mediaLightbox', 'lightboxImg', 'lightboxCounter', 'lightboxZoomBtn', 'lightboxPrev', 'lightboxNext', 'lightboxCaption', 'feedContainer', 'feedRefreshButton', 'feedProgress'].forEach(makeRichEl);
+
+    const postedTimelines = [];
+    const formPosts = [];
+    const rCtx = vm.createContext({
+        console, setTimeout, clearTimeout, Date, Math, JSON, URL, encodeURIComponent, decodeURIComponent, Set, Map,
+        localStorage: (() => {
+            const m = new Map();
+            return { getItem: k => m.get(k) || null, setItem: (k, v) => m.set(k, String(v)), removeItem: k => m.delete(k) };
+        })(),
+        history: { scrollRestoration: 'auto', state: null, replaceState() {}, pushState() {} },
+        window: { location: { hash: '', pathname: '/', search: '' }, addEventListener() {} },
+        document: {
+            getElementById: id => richDom.get(id) || null,
+            querySelector: () => null,
+            querySelectorAll: () => [],
+            addEventListener() {}
+        },
+        AndroidBridge: null,
+        fetch: () => Promise.resolve({ text: () => Promise.resolve('{}') })
+    });
+    rCtx.window.AndroidBridge = rCtx.AndroidBridge = {
+        getCookies: () => JSON.stringify({ auth_token: 'tok', ct0: 'csrf', image_mode: 'auto' }),
+        getCache: () => '',
+        saveCache: () => {},
+        takeTempResult: () => '',
+        executeGetAsync: () => {},
+        executePostWithTransactionAsync: (url, payload, tid, cbId) => {
+            postedTimelines.push({ url, payload: JSON.parse(payload), tid, cbId });
+        },
+        executeFormPostWithTransactionAsync: (url, formBody, tid, cbId) => {
+            formPosts.push({ url, formBody, tid, cbId });
+        }
+    };
+    vm.runInContext(script, rCtx);
+    vm.runInContext(`
+        appConfig = { auth_token: 'tok', ct0: 'csrf', image_mode: 'auto', avatar_mode: 'mini', hide_ads: true, sync_seen: true };
+        searchTransactionClient = { generateTransactionId: (m, p) => 'tid:' + m + ':' + p };
+        searchTransactionFetchedAt = Date.now();
+    `, rCtx);
+
+    assert.equal(rCtx.formatCount(999), '999');
+    assert.equal(rCtx.formatCount(13549), '13.5K');
+    assert.equal(rCtx.formatCount(2400000), '2.4M');
+
+    const richTweetRaw = {
+        rest_id: '777001',
+        core: { user_results: { result: { rest_id: '55', is_blue_verified: true, core: { name: 'Ada', screen_name: 'ada' } } } },
+        legacy: {
+            full_text: 'Three crisp photos + poll',
+            favorite_count: 1520,
+            retweet_count: 42,
+            reply_count: 8,
+            extended_entities: {
+                media: [
+                    { media_url_https: 'https://pbs.twimg.com/media/one.jpg', type: 'photo', ext_alt_text: 'Alt one' },
+                    { media_url_https: 'https://pbs.twimg.com/media/two.jpg', type: 'photo' },
+                    { media_url_https: 'https://pbs.twimg.com/media/three.jpg', type: 'photo' }
+                ]
+            }
+        },
+        card: {
+            legacy: {
+                name: 'poll2choice_text_only',
+                binding_values: [
+                    { key: 'choice1_label', value: { string_value: 'Yes' } },
+                    { key: 'choice1_count', value: { string_value: '75' } },
+                    { key: 'choice2_label', value: { string_value: 'No' } },
+                    { key: 'choice2_count', value: { string_value: '25' } },
+                    { key: 'counts_are_final', value: { boolean_value: true } }
+                ]
+            }
+        }
+    };
+    const richParsed = vm.runInContext(`parseSingleTweet(${JSON.stringify(richTweetRaw)})`, rCtx);
+    assert.equal(richParsed.user_verified, true);
+    assert.equal(richParsed.poll.total, 100);
+    const richMarkup = vm.runInContext(`renderTweetHtml(${JSON.stringify(richParsed)})`, rCtx);
+    assert.match(richMarkup, /class="media-grid media-grid-3"/);
+    assert.match(richMarkup, /mode=rich/);
+    assert.match(richMarkup, /verified-badge/);
+    assert.match(richMarkup, /♡ 1\.5K/);
+    assert.match(richMarkup, /poll-box/);
+    assert.match(richMarkup, /width:75%/);
+
+    // Lightbox open / step / zoom / close
+    rCtx.openLightbox('777001', 1);
+    assert.equal(richDom.get('mediaLightbox').classList.contains('open'), true);
+    assert.equal(richDom.get('lightboxCounter').textContent, '2 / 3');
+    assert.match(richDom.get('lightboxImg').src, /two\.jpg.*mode=hd/);
+    rCtx.stepLightbox(1);
+    assert.equal(richDom.get('lightboxCounter').textContent, '3 / 3');
+    rCtx.toggleLightboxZoom();
+    assert.equal(richDom.get('lightboxImg').classList.contains('zoomed'), true);
+    rCtx.closeLightbox();
+    assert.equal(richDom.get('mediaLightbox').classList.contains('open'), false);
+
+    // GIF renders muted loop autoplay video
+    const gifTw = vm.runInContext(`parseSingleTweet(${JSON.stringify({
+        rest_id: '777002',
+        legacy: { full_text: 'Looping GIF', extended_entities: { media: [{
+            media_url_https: 'https://pbs.twimg.com/tweet_video_thumb/g.jpg',
+            type: 'animated_gif',
+            video_info: { variants: [{ content_type: 'video/mp4', bitrate: 0, url: 'https://video.twimg.com/tweet_video/g.mp4' }] }
+        }] } }
+    })})`, rCtx);
+    const gifHtml = vm.runInContext(`renderTweetHtml(${JSON.stringify(gifTw)})`, rCtx);
+    assert.match(gifHtml, /autoplay loop muted playsinline/);
+    assert.match(gifHtml, />GIF</);
+
+    // Seen-post sync batches linger jot event + sends seenTweetIds in POST HomeTimeline + dedupes For You refresh
+    rCtx.markTweetSeen('777001', 'home', 800);
+    rCtx.flushSeenLinger(true);
+    assert.equal(formPosts.length, 1);
+    assert.match(formPosts[0].url, /\/i\/api\/1\.1\/jot\/client_event\.json$/);
+    assert.match(decodeURIComponent(formPosts[0].formBody), /777001/);
+
+    vm.runInContext("currentView = 'feed'; currentTab = 'foryou'; fetchFeedData('foryou', false);", rCtx);
+    assert.equal(postedTimelines.length, 1);
+    assert.match(postedTimelines[0].url, /\/HomeTimeline$/);
+    assert.deepEqual(postedTimelines[0].payload.variables.seenTweetIds, ['777001']);
+    assert.equal(postedTimelines[0].payload.variables.count, 20, 'Auto mode fetches 20 posts per page');
+
+    // Feed response with 1 already-seen post (777001) and 1 unseen post (777099) drops repeat on For You refresh
+    rCtx.window.__onAsyncFinish(postedTimelines[0].cbId, JSON.stringify({
+        data: { home: { home_timeline_urt: { instructions: [{ type: 'TimelineAddEntries', entries: [
+            { entryId: 'tweet-777001', content: { itemContent: { itemType: 'TimelineTweet', tweet_results: { result: richTweetRaw } } } },
+            { entryId: 'tweet-777099', content: { itemContent: { itemType: 'TimelineTweet', tweet_results: { result: { rest_id: '777099', legacy: { full_text: 'Fresh post' } } } } } }
+        ] }] } } }
+    }));
+    assert.doesNotMatch(rMain.innerHTML, /Three crisp photos/, 'Already-seen post filtered on For You refresh');
+    assert.match(rMain.innerHTML, /Fresh post/, 'Unseen post shown');
+    vm.runInContext("if (seenSaveDebounce) clearTimeout(seenSaveDebounce); if (seenFlushTimer) clearTimeout(seenFlushTimer);", rCtx);
 })();
 
 console.log('Feed navigation, refresh, and image retry tests passed.');

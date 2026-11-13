@@ -403,14 +403,17 @@ function runExtendedActionTests() {
     assert.equal(apkInstalls.length, 0, 'web-only update skips APK download');
     assert.equal(savedHtmls.length, 2);
 
-    // Settings renders Profile Pictures & Hide Ads preferences and saveSettings persists them
+    // Settings renders Profile Pictures, Hide Ads & Seen Sync preferences and saveSettings persists them
     store.cache_pref_avatar_mode = 'normal';
     store.cache_pref_hide_ads = 'false';
+    store.cache_pref_sync_seen = 'false';
     extCtx.renderSettings();
     assert.match(mainContent.innerHTML, /Profile Pictures/);
     assert.match(mainContent.innerHTML, /name="avatarMode" value="normal" checked/);
     assert.match(mainContent.innerHTML, /Promoted Posts \(Ads\)/);
     assert.match(mainContent.innerHTML, /name="hideAds" value="false" checked/);
+    assert.match(mainContent.innerHTML, /Sync Seen Posts to X/);
+    assert.match(mainContent.innerHTML, /name="syncSeen" value="false" checked/);
 
     let savedConfigArgs = null;
     let cacheClearedCount = 0;
@@ -426,13 +429,88 @@ function runExtendedActionTests() {
         if (sel === 'input[name="imgMode"]:checked') return { value: 'tap' };
         if (sel === 'input[name="avatarMode"]:checked') return { value: 'mini' };
         if (sel === 'input[name="hideAds"]:checked') return { value: 'true' };
+        if (sel === 'input[name="syncSeen"]:checked') return { value: 'true' };
         return null;
     };
     vm.runInContext("nav = () => {};", extCtx);
     extCtx.saveSettings({ preventDefault() {} });
     assert.equal(store.cache_pref_avatar_mode, 'mini');
     assert.equal(store.cache_pref_hide_ads, 'true');
+    assert.equal(store.cache_pref_sync_seen, 'true');
     assert.deepEqual(savedConfigArgs, { a: 'tok', c: 'csrf', m: 'tap' });
+
+    // __onAsyncFinish prefers takeTempResult when directResult is omitted
+    const tempTakes = [];
+    extCtx.AndroidBridge.takeTempResult = cbId => {
+        tempTakes.push(cbId);
+        return '{"ok":true,"via":"takeTempResult"}';
+    };
+    let takenResult = '';
+    const asyncFinish = extCtx.window.__onAsyncFinish || extCtx.__onAsyncFinish;
+    vm.runInContext("pendingCallbacks['cb_temp_test'] = (r) => { globalThis.__takenOut = r; };", extCtx);
+    asyncFinish('cb_temp_test');
+    assert.deepEqual(tempTakes, ['cb_temp_test']);
+    assert.equal(vm.runInContext('globalThis.__takenOut', extCtx), '{"ok":true,"via":"takeTempResult"}');
+
+    // Quote compose includes attachment_url pointing to quoted status
+    const qVars = extCtx.buildTweetVariables('My take', null, { id: '555111', screenName: 'alice' });
+    assert.equal(qVars.attachment_url, 'https://x.com/alice/status/555111');
+
+    // Profile parser reads modern X UserByScreenName fields & Follow toggles friendships endpoint
+    const parsedProf = extCtx.parseUserProfileResult(JSON.stringify({
+        data: { user: { result: {
+            rest_id: '42',
+            is_blue_verified: true,
+            core: { name: 'Grace', screen_name: 'grace' },
+            avatar: { image_url: 'https://pbs.twimg.com/profile_images/1/a_normal.jpg' },
+            profile_bio: { description: 'Builder' },
+            relationship_counts: { followers: 1200, following: 50 },
+            relationship_perspectives: { following: false, followed_by: true },
+            tweet_counts: { tweets: 99 }
+        } } }
+    }));
+    assert.equal(parsedProf.id, '42');
+    assert.equal(parsedProf.followers, 1200);
+    assert.equal(parsedProf.verified, true);
+    const followCalls = [];
+    extCtx.AndroidBridge.executeFormPostWithTransactionAsync = (url, body, tid, cbId) => {
+        followCalls.push({ url, body, cbId });
+    };
+    vm.runInContext("searchTransactionClient = { generateTransactionId: () => 'tid1' }; searchTransactionFetchedAt = Date.now();", extCtx);
+    extCtx.__tmpProf = parsedProf;
+    vm.runInContext("profileState = { screenName: 'grace', user: __tmpProf, tab: 'tweets', tweets: [], cursor: null, loading: false, error: '' };", extCtx);
+    extCtx.toggleFollowUser('42');
+    assert.equal(followCalls.length, 1);
+    assert.match(followCalls[0].url, /\/i\/api\/1\.1\/friendships\/create\.json$/);
+    assert.equal(followCalls[0].body, 'user_id=42');
+
+    // Notifications fetches signed endpoint and renders clickable alerts
+    const notifGets = [];
+    const notifBox = { innerHTML: '' };
+    const getWithNotif = extCtx.document.getElementById;
+    extCtx.document.getElementById = id => (id === 'notifListBox' ? notifBox : getWithNotif(id));
+    extCtx.AndroidBridge.executeSignedGetAsync = (url, tid, cbId) => notifGets.push({ url, tid, cbId });
+    vm.runInContext("currentView = 'notifications';", extCtx);
+    extCtx.renderNotifications();
+    assert.equal(notifGets.length, 1);
+    assert.match(notifGets[0].url, /\/i\/api\/2\/notifications\/all\.json/);
+    asyncFinish(notifGets[0].cbId, JSON.stringify({
+        globalObjects: {
+            users: { '9': { id_str: '9', name: 'Bob', screen_name: 'bob' } },
+            tweets: { '888': { id_str: '888', full_text: 'Original tweet text', user_id_str: '9' } },
+            notifications: {
+                'n1': {
+                    timestampMs: '1700000000000',
+                    icon: { id: 'heart_icon' },
+                    message: { text: 'Bob liked your post' },
+                    template: { aggregateUserActionsV1: { fromUsers: [{ user: { id: '9' } }], targetObjects: [{ tweet: { id: '888' } }] } }
+                }
+            }
+        }
+    }));
+    assert.match(notifBox.innerHTML, /Bob liked your post/);
+    assert.match(notifBox.innerHTML, /Original tweet text/);
+    vm.runInContext("if (seenSaveDebounce) clearTimeout(seenSaveDebounce); if (seenFlushTimer) clearTimeout(seenFlushTimer);", extCtx);
 
     console.log('Async post and reply tests passed.');
 }
