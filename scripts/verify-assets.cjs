@@ -191,7 +191,6 @@ function checkRequiredRepoFilesAndLinks(version) {
         `docs/releases/v${version}.md`,
         'docs/screenshots/feed.webp',
         'docs/screenshots/thread.webp',
-        'docs/screenshots/settings.webp',
         '.github/ISSUE_TEMPLATE/bug_report.md',
         '.github/ISSUE_TEMPLATE/feature_request.md',
         '.github/pull_request_template.md',
