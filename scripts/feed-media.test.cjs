@@ -98,7 +98,10 @@ assert.match(textOnly, /A giant monster near a bridge/, 'description remains ava
 assert.doesNotMatch(textOnly, /<img|\.mp4/);
 vm.runInContext("appConfig.image_mode = 'auto'", context);
 const autoPreview = vm.runInContext(`renderTweetHtml(${JSON.stringify(parsed)})`, context);
-assert.match(autoPreview, /<video\b[^>]*controls playsinline/, 'automatic mode renders inline video player');
+assert.match(autoPreview, /<video\b[^>]*controls muted loop playsinline/, 'automatic mode renders muted autoplay inline video player');
+assert.match(autoPreview, /preload="none"/, 'defers off-screen video metadata fetch until near viewport');
+assert.match(autoPreview, /class="video-mute-btn"/, 'renders compact SVG mute toggle button');
+assert.doesNotMatch(autoPreview, /video-meta-row|video-hd-btn|HD ✓/, 'video box renders plain without bottom metadata bar');
 assert.match(autoPreview, /poster="https:\/\/local\.xlite\/img\?url=https%3A%2F%2Fpbs\.twimg\.com%2Fext_tw_video_thumb%2Ftest\.jpg&mode=(?:rich|hd)"/, 'automatic mode requests full-resolution poster');
 assert.match(autoPreview, /src="https:\/\/video\.twimg\.com\/ext_tw_video\/test\/high\.mp4"/);
 assert.doesNotMatch(autoPreview, /evil\.example/, 'untrusted MP4 origins are stripped');
@@ -345,7 +348,7 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
     assert.doesNotMatch(decodeURIComponent(new URL(loadedHdImages[0].src).searchParams.get('url')), /format=webp/, 'failed WebP falls back once to raw PNG URL');
     loadedHdImages[0].onload();
     assert.equal(targetImg.src, loadedHdImages[0].src);
-    assert.equal(hdBtn.innerHTML, '✓ HD · Reload');
+    assert.match(hdBtn.innerHTML, /^<svg[^>]*icon-svg[^>]*>[\s\S]* HD · Reload$/);
     assert.equal(hdBtn.disabled, false, 'HD button stays enabled so user can reload cleanly');
     assert.equal(hdBtn.dataset.retryRequested, '1');
 
@@ -662,7 +665,8 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
     assert.match(richMarkup, /class="media-grid media-grid-3"/);
     assert.match(richMarkup, /mode=rich/);
     assert.match(richMarkup, /verified-badge/);
-    assert.match(richMarkup, /♡ 1\.5K/);
+    assert.match(richMarkup, /<svg[^>]*icon-svg[^>]*>[\s\S]*<span>1\.5K<\/span>/);
+    assert.doesNotMatch(richMarkup, /[🔔👤🏠🔍⚙⌂⚲✎💬⇄♥♡❝★☆🔗📦●📍✓]/u, 'Rendered tweet UI uses SVG icons instead of pictographs or checkmarks');
     assert.match(richMarkup, /poll-box/);
     assert.match(richMarkup, /width:75%/);
 
@@ -760,10 +764,18 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
     assert.match(hdMultiHtml, /src="https:\/\/video\.twimg\.com\/ext_tw_video\/777100\/hd\.mp4"/, 'Auto mode defaults directly to full HD video bitrate');
     assert.match(hdMultiHtml, /data-fallback-src="https:\/\/video\.twimg\.com\/ext_tw_video\/777100\/sd\.mp4"/, 'HD video retains SD fallback');
     assert.match(hdMultiHtml, /onplay="pauseOtherVideos\(this\)"/);
-    assert.match(hdMultiHtml, /HD ✓/, 'HD toggle indicates active HD stream');
-    assert.match(hdMultiHtml, /poster\.jpg[^"]*mode=rich/, 'Auto mode requests crisp video poster');
+    assert.match(hdMultiHtml, /controls muted loop playsinline data-autoplay="1"/, 'Videos autoplay muted by default on X-like timeline');
+    assert.doesNotMatch(hdMultiHtml, /video-meta-row|video-hd-btn|HD ✓/, 'Video card omits bottom Video/HD bar');
+    assert.match(hdMultiHtml, /poster\.jpg[^"]*mode=rich/, 'Auto mode requests high-res video poster');
     assert.match(hdMultiHtml, /pfp_bigger\.jpg[^"]*mode=rich/, 'Auto mode upgrades normal avatars cleanly');
     assert.match(hdMultiHtml, /quotedpic\.jpg[^"]*mode=rich/, 'Auto mode renders media inside quoted tweets');
+
+    // Disabling Video Autoplay disables muted autoplay attrs & mute button while keeping plain container
+    vm.runInContext("appConfig.autoplay_videos = false;", rCtx);
+    const manualVideoHtml = vm.runInContext(`renderTweetHtml(${JSON.stringify(hdMultiParsed)})`, rCtx);
+    assert.match(manualVideoHtml, /controls playsinline preload="none"/);
+    assert.doesNotMatch(manualVideoHtml, /data-autoplay="1"|video-mute-btn|video-meta-row/);
+    vm.runInContext("appConfig.autoplay_videos = true;", rCtx);
 
     // Every ad vector is blocked when hide_ads is active
     const sneakyAds = rCtx.parseTwitterGraphql(JSON.stringify({
@@ -795,5 +807,160 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
 
     vm.runInContext("if (seenSaveDebounce) clearTimeout(seenSaveDebounce); if (seenFlushTimer) clearTimeout(seenFlushTimer);", rCtx);
 })();
+
+(() => {
+    // Reddit-style threaded replies hierarchy + ancestor spine + collapse support
+    const domMap = new Map();
+    const makeDomNode = () => ({ innerHTML: '', textContent: '' });
+    ['mainContent', 'threadAncestors', 'threadFocal', 'repliesContainer', 'threadContainer'].forEach(id => domMap.set(id, makeDomNode()));
+    const tCtx = vm.createContext({
+        console, setTimeout, clearTimeout, Date, Math, JSON, URL, encodeURIComponent, decodeURIComponent, Set, Map,
+        localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+        history: { scrollRestoration: 'auto', state: null, replaceState() {}, pushState() {} },
+        window: { location: { hash: '', pathname: '/', search: '' }, addEventListener() {} },
+        document: {
+            getElementById: id => domMap.get(id) || null,
+            querySelector: () => null,
+            querySelectorAll: () => [],
+            addEventListener() {}
+        },
+        AndroidBridge: null,
+        fetch: () => Promise.resolve({ text: () => Promise.resolve('{}') })
+    });
+    tCtx.window.AndroidBridge = tCtx.AndroidBridge = {
+        getCookies: () => JSON.stringify({ auth_token: 'tok', ct0: 'csrf', image_mode: 'auto' }),
+        getCache: () => '',
+        saveCache() {}
+    };
+    vm.runInContext(script, tCtx);
+
+    const parsedThread = tCtx.parseTwitterGraphql(JSON.stringify({
+        data: { threaded_conversation_with_injections_v2: { instructions: [{ type: 'TimelineAddEntries', entries: [
+            { entryId: 'tweet-10', content: { itemContent: { itemType: 'TimelineTweet', tweet_results: { result: {
+                rest_id: '10',
+                core: { user_results: { result: { core: { name: 'Root', screen_name: 'rootuser' } } } },
+                legacy: { full_text: 'Original parent post' }
+            } } } } },
+            { entryId: 'tweet-20', content: { itemContent: { itemType: 'TimelineTweet', tweet_results: { result: {
+                rest_id: '20',
+                core: { user_results: { result: { core: { name: 'OP', screen_name: 'opuser' } } } },
+                legacy: { full_text: 'Focal post replying to root', in_reply_to_status_id_str: '10', in_reply_to_screen_name: 'rootuser' }
+            } } } } },
+            { entryId: 'conversationthread-1', content: { items: [
+                { item: { itemContent: { itemType: 'TimelineTweet', tweet_results: { result: {
+                    rest_id: '30',
+                    core: { user_results: { result: { core: { name: 'Alice', screen_name: 'alice' } } } },
+                    legacy: { full_text: 'First level comment', in_reply_to_status_id_str: '20', in_reply_to_screen_name: 'opuser' }
+                } } } } },
+                { item: { itemContent: { itemType: 'TimelineTweet', tweet_results: { result: {
+                    rest_id: '31',
+                    core: { user_results: { result: { core: { name: 'Bob', screen_name: 'bob' } } } },
+                    legacy: { full_text: 'Nested reply to Alice', in_reply_to_status_id_str: '30', in_reply_to_screen_name: 'alice' }
+                } } } } },
+                { item: { itemContent: { itemType: 'TimelineTweet', tweet_results: { result: {
+                    rest_id: '32',
+                    core: { user_results: { result: { core: { name: 'Carol', screen_name: 'carol' } } } },
+                    legacy: { full_text: 'Level 3 reply to Bob', in_reply_to_status_id_str: '31', in_reply_to_screen_name: 'bob' }
+                } } } } }
+            ] } },
+            { entryId: 'tweet-40', content: { itemContent: { itemType: 'TimelineTweet', tweet_results: { result: {
+                rest_id: '40',
+                core: { user_results: { result: { core: { name: 'Orphan', screen_name: 'orphan' } } } },
+                legacy: { full_text: 'Replying to missing tweet', in_reply_to_status_id_str: '999', in_reply_to_screen_name: 'deleteduser' }
+            } } } } }
+        ] }] } }
+    }));
+
+    assert.equal(parsedThread.tweets.find(t => t.id === '31').in_reply_to_id, '30');
+    assert.equal(parsedThread.tweets.find(t => t.id === '31').in_reply_to_screen_name, 'alice');
+
+    tCtx.renderThreadData('20', null, parsedThread);
+    const ancHtml = domMap.get('threadAncestors').innerHTML;
+    const focalHtml = domMap.get('threadFocal').innerHTML;
+    const repliesHtml = domMap.get('repliesContainer').innerHTML;
+
+    assert.match(ancHtml, /Original parent post/, 'Ancestor parent renders above focal post');
+    assert.match(focalHtml, /Focal post replying to root/, 'Focal tweet populates when loaded from TweetDetail');
+    assert.match(repliesHtml, /data-tweet-id="30" data-depth="0"/, 'Top-level reply renders at depth 0');
+    assert.match(repliesHtml, /data-tweet-id="31" data-depth="1"/, 'Child reply nests at depth 1');
+    assert.match(repliesHtml, /data-tweet-id="32" data-depth="2"/, 'Grandchild reply nests at depth 2');
+    assert.match(repliesHtml, /Replying to .*@alice/, 'Shows explicit parent target handle');
+    assert.match(repliesHtml, /Replying to .*@deleteduser/, 'Orphaned reply still shows who it replied to');
+    assert.match(repliesHtml, /reddit-children/, 'Nested children wrapped inside thread guide container');
+    assert.match(repliesHtml, /data-desc-count="2"/, 'Collapse button tracks descendant count');
+})();
+
+(() => {
+    // Persistent compact ClientTransaction cache enables 0-roundtrip cold starts and recovers on 401
+    const txScript = html.split('<script>')[1].split('</script>')[0];
+    const persistentKv = new Map();
+    const validKey = Buffer.from(Array.from({ length: 48 }, (_, i) => (i * 11 + 7) % 256)).toString('base64');
+    const makeSvg = id => `<svg id="loading-x-anim-${id}"><path d="M0 0"></path><path d="M 10 20 30 40 50 60 70 C 120 80 140 160 90 210 180 40 200 110"></path></svg>`;
+    const homeHtmlFixture = `<html><head><meta name="twitter-site-verification" content="${validKey}"><script>var chunks={,12:"ondemand.s",12:"deadbeef"};</script></head><body>${makeSvg(0)}${makeSvg(1)}${makeSvg(2)}${makeSvg(3)}</body></html>`;
+    const ondemandScriptFixture = 'function x(e){return (e[1],16)+(e[2],16)+(e[3],16)+(e[4],16);}';
+
+    const makeBootCtx = (getLog, postLog) => {
+        const ctx = vm.createContext({
+            console, setTimeout, clearTimeout, Date, Math, JSON, URL, encodeURIComponent, decodeURIComponent, Set, Map, Uint8Array, TextEncoder, atob, btoa, Buffer,
+            localStorage: { getItem: k => persistentKv.get('ls_' + k) || null, setItem: (k, v) => persistentKv.set('ls_' + k, String(v)), removeItem: k => persistentKv.delete('ls_' + k) },
+            history: { scrollRestoration: 'auto', state: null, replaceState() {}, pushState() {} },
+            window: { location: { hash: '', pathname: '/', search: '' }, addEventListener() {} },
+            document: { getElementById: () => null, querySelector: () => null, querySelectorAll: () => [], addEventListener() {} },
+            AndroidBridge: null
+        });
+        ctx.window.AndroidBridge = ctx.AndroidBridge = {
+            getCookies: () => JSON.stringify({ auth_token: 'tok', ct0: 'csrf', image_mode: 'tap' }),
+            getCache: k => persistentKv.get(k) || '',
+            saveCache: (k, v) => { if (v) persistentKv.set(k, String(v)); else persistentKv.delete(k); },
+            executeGetAsync: (url, cbId) => {
+                getLog.push(url);
+                const body = url.includes('ondemand.s.') ? ondemandScriptFixture : homeHtmlFixture;
+                setTimeout(() => ctx.window.__onAsyncFinish(cbId, body), 0);
+            },
+            executePostWithTransactionAsync: (url, payload, tid, cbId) => {
+                postLog.push({ url, payload, tid, cbId });
+            }
+        };
+        vm.runInContext(txScript, ctx);
+        vm.runInContext(script, ctx);
+        return ctx;
+    };
+
+    const coldGets = [];
+    const coldPosts = [];
+    const ctx1 = makeBootCtx(coldGets, coldPosts);
+    ctx1.performSignedPost('/i/api/graphql/qid1/HomeLatestTimeline', '{"variables":{}}', () => {});
+
+    setTimeout(() => {
+        assert.equal(coldGets.length, 2, 'Cold first run fetches home HTML + ondemand script once');
+        assert.equal(coldPosts.length, 1);
+        assert.ok(persistentKv.get('pref_tx_cache_v1').length < 2500, 'Persisted tx snippet stays ultra-compact');
+
+        // Second cold launch reads cached tx synchronously and dispatches timeline with ZERO home/ondemand fetches
+        const warmGets = [];
+        const warmPosts = [];
+        const ctx2 = makeBootCtx(warmGets, warmPosts);
+        assert.equal(ctx2.hydrateCachedXTransaction(), true);
+        let warmResult = '';
+        ctx2.performSignedPost('/i/api/graphql/qid1/HomeLatestTimeline', '{"variables":{}}', (r) => { warmResult = r; });
+        assert.equal(warmGets.length, 0, 'Warm launch sends timeline POST immediately without fetching x.com/home or JS');
+        assert.equal(warmPosts.length, 1);
+
+        // If cached transaction fails HTTP 401, client invalidates cache, refreshes once, and retries
+        ctx2.window.__onAsyncFinish(warmPosts[0].cbId, JSON.stringify({ error: true, status: 401, message: 'HTTP 401' }));
+        setTimeout(() => {
+            assert.equal(warmGets.length, 1, '401 invalidation skips redundant ondemand fetch because ondemand hash is already cached');
+            assert.equal(warmPosts.length, 2, 'Retries failed signed POST once with fresh transaction');
+            ctx2.window.__onAsyncFinish(warmPosts[1].cbId, JSON.stringify({ data: { ok: true } }));
+            assert.equal(warmResult, JSON.stringify({ data: { ok: true } }));
+            txWarmChecksCompleted = true;
+        }, 40);
+    }, 40);
+})();
+
+let txWarmChecksCompleted = false;
+process.on('beforeExit', () => {
+    assert.equal(txWarmChecksCompleted, true, 'Async warm ClientTransaction checks must finish completely');
+});
 
 console.log('Feed navigation, refresh, and image retry tests passed.');
