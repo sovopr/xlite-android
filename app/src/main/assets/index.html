@@ -154,6 +154,16 @@ a { color: var(--accent); text-decoration: none; }
   opacity: 0;
   transition: opacity 0.12s ease;
 }
+.ad-badge {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  line-height: 1.3;
+  flex-shrink: 0;
+}
 .tweet-name {
   font-weight: 700;
   color: var(--text);
@@ -1348,8 +1358,8 @@ let isFetching = false;
 let pendingCallbacks = {};
 const pendingActionLocks = {};
 const activeImageLoads = new Set();
-const APP_VERSION = '1.0.19';
-const APP_BUILD = '2026.11.13.4';
+const APP_VERSION = '1.0.20';
+const APP_BUILD = '2026.11.13.5';
 const LATEST_APK_VERSION = '1.0.18';
 const LATEST_APK_URL = 'https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk';
 let activeApkDownloadState = null;
@@ -1746,6 +1756,17 @@ function switchFeed(tab) {
         el.classList.toggle('active', ['following', 'foryou', 'cache'][idx] === tab);
     });
     loadFeed(tab);
+}
+
+function decodeHtmlEntities(text) {
+    if (!text) return '';
+    // Decode named/numeric entities before &amp; so double-encoded text stays literal on re-escape.
+    return String(text)
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#(?:39|x27);|&apos;/gi, "'")
+        .replace(/&amp;/g, '&');
 }
 
 function escapeHtml(text) {
@@ -2284,6 +2305,7 @@ function renderTweetHtml(tw) {
                 ${handleHtml}
                 ${timeHtml}
             </div>
+            ${tw.is_ad ? '<span class="ad-badge">Ad</span>' : ''}
         </div>
         <div class="tweet-body" onclick="viewThread('${escapeHtml(tw.id)}')">${linkify(tw.text)}</div>
         ${mediaHtml}
@@ -2313,7 +2335,7 @@ function extractUser(tw) {
     let core = uRes.core || {};
     let legacy = uRes.legacy || {};
 
-    let name = core.name || legacy.name || uRes.name || '';
+    let name = decodeHtmlEntities(core.name || legacy.name || uRes.name || '');
     let screen_name = core.screen_name || legacy.screen_name || uRes.screen_name || '';
     let avatar = uRes.avatar?.image_url || legacy.profile_image_url_https || uRes.profile_image_url_https || '';
 
@@ -2330,6 +2352,10 @@ function findInstructions(obj) {
         }
     }
     return null;
+}
+
+function isPromotedItem(item, entryId) {
+    return !!(item?.promotedMetadata || (entryId && String(entryId).startsWith('promoted-tweet-')));
 }
 
 function parseTwitterGraphql(jsonStr) {
@@ -2393,7 +2419,13 @@ function parseTwitterGraphql(jsonStr) {
             let res = item.tweet_results?.result;
             if (res) {
                 let parsed = parseSingleTweet(res);
-                if (parsed) tweets.push(parsed);
+                if (parsed) {
+                    if (isPromotedItem(item, entry.entryId)) {
+                        parsed.is_ad = true;
+                        allTweetsMap[parsed.id] = parsed;
+                    }
+                    tweets.push(parsed);
+                }
             }
         }
 
@@ -2405,7 +2437,13 @@ function parseTwitterGraphql(jsonStr) {
                 let sRes = sItem.tweet_results?.result || sItem.result;
                 if (sRes) {
                     let parsed = parseSingleTweet(sRes);
-                    if (parsed) tweets.push(parsed);
+                    if (parsed) {
+                        if (isPromotedItem(sItem, sub.entryId)) {
+                            parsed.is_ad = true;
+                            allTweetsMap[parsed.id] = parsed;
+                        }
+                        tweets.push(parsed);
+                    }
                 }
             }
         });
@@ -2442,7 +2480,7 @@ function parseSingleTweet(tw) {
         }
     }
 
-    let text = tw.note_tweet?.note_tweet_results?.result?.text || legacy.full_text || tw.full_text || tw.text || '';
+    let text = decodeHtmlEntities(tw.note_tweet?.note_tweet_results?.result?.text || legacy.full_text || tw.full_text || tw.text || '');
     text = text.replace(/https?:\/\/t\.co\/\S+$/, '').trim();
 
     let user = extractUser(tw);
@@ -2452,7 +2490,7 @@ function parseSingleTweet(tw) {
     extMedia.forEach(m => {
         let mUrl = m.media_url_https || m.media_url;
         if (mUrl) {
-            media.push({ url: mUrl, type: m.type, duration_ms: m.video_info?.duration_millis || 0, alt_text: m.ext_alt_text || m.alt_text || '' });
+            media.push({ url: mUrl, type: m.type, duration_ms: m.video_info?.duration_millis || 0, alt_text: decodeHtmlEntities(m.ext_alt_text || m.alt_text || '') });
         }
     });
 
@@ -2479,7 +2517,8 @@ function parseSingleTweet(tw) {
         media,
         quoted,
         is_retweet: isRetweet,
-        retweeted_by: retweetedBy
+        retweeted_by: retweetedBy,
+        is_ad: false
     };
     allTweetsMap[id] = parsed;
     return parsed;

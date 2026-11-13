@@ -393,6 +393,95 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
     assert.match(initialsMarkup, /<span>A<\/span>/);
     vm.runInContext("appConfig.avatar_mode = 'mini'; appConfig.image_mode = 'off';", hdCtx);
     assert.doesNotMatch(hdCtx.renderTweetHtml(pfpTweet), /<img\b/, 'Text-only mode keeps 0 KB even when avatar_mode is mini');
+
+    // Promoted posts (ads) badge + HTML entity decoding without breaking XSS escaping
+    const promoResponse = JSON.stringify({
+        data: {
+            home: {
+                home_timeline_urt: {
+                    instructions: [
+                        {
+                            type: 'TimelineAddEntries',
+                            entries: [
+                                {
+                                    entryId: 'promoted-tweet-9901',
+                                    content: {
+                                        itemContent: {
+                                            itemType: 'TimelineTweet',
+                                            promotedMetadata: { impressionId: 'imp-1' },
+                                            tweet_results: {
+                                                result: {
+                                                    rest_id: '9901',
+                                                    core: { user_results: { result: { core: { name: 'Emory &amp; Blanc', screen_name: 'emoryblanc' } } } },
+                                                    legacy: { id_str: '9901', full_text: 'Silk &amp; Linen &gt; 50% off &lt;script&gt;alert(1)&lt;/script&gt; https://example.com?a=1&amp;b=2' }
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    entryId: 'tweet-9902',
+                                    content: {
+                                        itemContent: {
+                                            itemType: 'TimelineTweet',
+                                            tweet_results: {
+                                                result: {
+                                                    rest_id: '9902',
+                                                    core: { user_results: { result: { core: { name: 'Regular User', screen_name: 'reguser' } } } },
+                                                    legacy: { id_str: '9902', full_text: 'Literal entity &amp;amp; &amp;lt;tag&amp;gt; stays literal' }
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    entryId: 'home-conversation-9903',
+                                    content: {
+                                        items: [
+                                            {
+                                                entryId: 'promoted-tweet-9903',
+                                                item: {
+                                                    itemContent: {
+                                                        itemType: 'TimelineTweet',
+                                                        tweet_results: {
+                                                            result: {
+                                                                rest_id: '9903',
+                                                                core: { user_results: { result: { core: { name: 'Module Ad', screen_name: 'modad' } } } },
+                                                                legacy: { id_str: '9903', full_text: 'Promoted inside module' }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        }
+    });
+    const promoParsed = hdCtx.parseTwitterGraphql(promoResponse);
+    assert.equal(promoParsed.tweets.length, 3);
+    const [adTweet, organicTweet, moduleAdTweet] = promoParsed.tweets;
+    assert.equal(adTweet.is_ad, true);
+    assert.equal(adTweet.user_name, 'Emory & Blanc');
+    assert.equal(organicTweet.is_ad, false);
+    assert.equal(moduleAdTweet.is_ad, true);
+
+    const adMarkup = hdCtx.renderTweetHtml(adTweet);
+    assert.match(adMarkup, /<span class="ad-badge">Ad<\/span>/);
+    assert.match(adMarkup, /Emory &amp; Blanc/);
+    assert.doesNotMatch(adMarkup, /&amp;amp;/, 'HTML entity &amp; must not be double-escaped');
+    assert.match(adMarkup, /Silk &amp; Linen &gt; 50% off &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+    assert.doesNotMatch(adMarkup, /<script>alert/, 'Decoded tags are re-escaped safely by linkify');
+    assert.match(adMarkup, /href="https:\/\/example\.com\?a=1&amp;b=2"/);
+
+    const organicMarkup = hdCtx.renderTweetHtml(organicTweet);
+    assert.doesNotMatch(organicMarkup, /ad-badge/);
+    assert.match(organicMarkup, /&amp;amp; &amp;lt;tag&amp;gt;/, 'User-typed literal entities remain literal');
 })();
 
 console.log('Feed navigation, refresh, and image retry tests passed.');
