@@ -195,4 +195,22 @@ class XLiteUnitTest {
         assertEquals("tap", XLitePolicy.normalizeImageMode(null))
         assertEquals("tap", XLitePolicy.normalizeImageMode("invalid"))
     }
+
+    @Test
+    fun testVideoPolicyAndRangeParsing() {
+        assertTrue(XLitePolicy.isAllowedVideoUrl("https://video.twimg.com/ext_tw_video/123/pu/vid/avc1/720x1280/abc.mp4"))
+        assertTrue(XLitePolicy.isAllowedVideoUrl("https://video.twimg.com/tweet_video/abc.mp4"))
+        assertFalse(XLitePolicy.isAllowedVideoUrl("http://video.twimg.com/ext_tw_video/123/a.mp4"))
+        assertFalse(XLitePolicy.isAllowedVideoUrl("https://evil.example/a.mp4"))
+        assertFalse(XLitePolicy.isAllowedVideoUrl("https://video.twimg.com/..%2fsecret.mp4"))
+
+        assertEquals(XLitePolicy.ByteRange(0L, null), XLitePolicy.parseByteRange("bytes=0-"))
+        assertEquals(XLitePolicy.ByteRange(1024L, 2047L), XLitePolicy.parseByteRange("bytes=1024-2047"))
+        assertNull(XLitePolicy.parseByteRange("bytes=500-100"))
+        assertNull(XLitePolicy.parseByteRange("bytes=0-10, 20-30"))
+        assertNull(XLitePolicy.parseByteRange(null))
+
+        assertEquals(3456789L, XLitePolicy.parseTotalLengthFromContentRange("bytes 0-786431/3456789"))
+        assertNull(XLitePolicy.parseTotalLengthFromContentRange("bytes */*"))
+    }
 }

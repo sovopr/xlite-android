@@ -34,6 +34,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var bridge: TwitterBridge
+    private lateinit var videoStreamProxy: VideoStreamProxy
     private var fullscreenView: View? = null
     private var fullscreenContainer: FrameLayout? = null
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
@@ -82,6 +83,7 @@ class MainActivity : AppCompatActivity() {
         settings.cacheMode = WebSettings.LOAD_DEFAULT
 
         bridge = TwitterBridge(this)
+        videoStreamProxy = VideoStreamProxy.get(this)
         webView.addJavascriptInterface(bridge, "AndroidBridge")
 
         val imgCacheDir = File(cacheDir, "images")
@@ -103,15 +105,24 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?
             ): WebResourceResponse? {
                 val url = request?.url ?: return null
-                if (url.scheme == "https" && url.host == "local.xlite" && url.path == "/img") {
-                    val targetUrl = url.getQueryParameter("url") ?: return null
-                    val mode = url.getQueryParameter("mode") ?: "thumb"
-                    return handleImageRequest(targetUrl, mode, imgCacheDir)
-                        ?: WebResourceResponse(
-                            "image/webp", "UTF-8", 503, "Image unavailable",
-                            mapOf("Cache-Control" to "no-store"),
-                            ByteArrayInputStream(ByteArray(0))
-                        )
+                if (url.scheme == "https" && url.host == "local.xlite") {
+                    if (url.path == "/img") {
+                        val targetUrl = url.getQueryParameter("url") ?: return null
+                        val mode = url.getQueryParameter("mode") ?: "thumb"
+                        return handleImageRequest(targetUrl, mode, imgCacheDir)
+                            ?: WebResourceResponse(
+                                "image/webp", "UTF-8", 503, "Image unavailable",
+                                mapOf("Cache-Control" to "no-store"),
+                                ByteArrayInputStream(ByteArray(0))
+                            )
+                    }
+                    if (url.path == "/vid") {
+                        val targetUrl = url.getQueryParameter("url") ?: return null
+                        val range = request.requestHeaders?.entries
+                            ?.firstOrNull { it.key.equals("Range", ignoreCase = true) }
+                            ?.value
+                        return videoStreamProxy.handleRequest(targetUrl, range)
+                    }
                 }
                 return super.shouldInterceptRequest(view, request)
             }
