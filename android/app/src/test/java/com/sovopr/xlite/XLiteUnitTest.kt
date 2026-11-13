@@ -170,4 +170,14 @@ class XLiteUnitTest {
         assertEquals("image/png", XLitePolicy.detectImageMime(byteArrayOf(0x89.toByte(), 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte())))
         assertEquals("image/jpeg", XLitePolicy.detectImageMime(byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte())))
     }
+
+    @Test
+    fun testImageModeNormalization() {
+        assertEquals("auto", XLitePolicy.normalizeImageMode("auto"))
+        assertEquals("auto", XLitePolicy.normalizeImageMode("  AUTO "))
+        assertEquals("off", XLitePolicy.normalizeImageMode("off"))
+        assertEquals("tap", XLitePolicy.normalizeImageMode("tap"))
+        assertEquals("tap", XLitePolicy.normalizeImageMode(null))
+        assertEquals("tap", XLitePolicy.normalizeImageMode("invalid"))
+    }
 }

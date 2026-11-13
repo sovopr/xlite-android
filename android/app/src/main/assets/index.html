@@ -1632,9 +1632,9 @@ let isFetching = false;
 let pendingCallbacks = {};
 const pendingActionLocks = {};
 const activeImageLoads = new Set();
-const APP_VERSION = '1.0.25';
-const APP_BUILD = '2026.11.13.10';
-const LATEST_APK_VERSION = '1.0.25';
+const APP_VERSION = '1.0.26';
+const APP_BUILD = '2026.11.13.11';
+const LATEST_APK_VERSION = '1.0.26';
 const LATEST_APK_URL = 'https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk';
 const LATEST_APK_SHA256 = '';
 let activeApkDownloadState = null;
@@ -1812,6 +1812,54 @@ function writeCachePref(cacheKey, storageKey, value) {
     }
     try { localStorage.setItem(storageKey, value); } catch (_) {}
     return value;
+}
+
+function normalizeImageMode(mode) {
+    const normalized = typeof mode === 'string' ? mode.trim().toLowerCase() : '';
+    return ['tap', 'auto', 'off'].includes(normalized) ? normalized : 'tap';
+}
+
+function readSavedImageMode(nativeMode) {
+    const valid = mode => mode === 'tap' || mode === 'auto' || mode === 'off';
+    const rawNative = typeof nativeMode === 'string' ? nativeMode.trim().toLowerCase() : '';
+    const cached = readCachePref('pref_image_mode', 'xlite_image_mode').trim().toLowerCase();
+    if (valid(cached)) return cached;
+    if (valid(rawNative)) return rawNative;
+    return 'tap';
+}
+
+function saveImageModePref(mode, opts = {}) {
+    const normalized = normalizeImageMode(mode);
+    writeCachePref('pref_image_mode', 'xlite_image_mode', normalized);
+
+    if (window.AndroidBridge && !opts.skipNative) {
+        try {
+            if (typeof AndroidBridge.saveImageMode === 'function') {
+                AndroidBridge.saveImageMode(normalized);
+            } else if (typeof AndroidBridge.saveConfig === 'function') {
+                let auth = (appConfig && appConfig.auth_token) ? appConfig.auth_token : '';
+                let ct0 = (appConfig && appConfig.ct0) ? appConfig.ct0 : '';
+                if ((!auth || !ct0) && typeof AndroidBridge.getCookies === 'function') {
+                    try {
+                        const saved = JSON.parse(AndroidBridge.getCookies());
+                        if (!auth && saved && saved.auth_token) auth = saved.auth_token;
+                        if (!ct0 && saved && saved.ct0) ct0 = saved.ct0;
+                    } catch (_) {}
+                }
+                // Preserve existing tokens when syncing only image_mode onto pre-v1.0.26 APKs.
+                if ((auth && ct0) || (!auth && !ct0)) {
+                    AndroidBridge.saveConfig(auth || '', ct0 || '', normalized);
+                }
+            }
+        } catch (_) {}
+    }
+
+    appConfig.image_mode = normalized;
+    syncRichBodyClass();
+    savedFeedMarkup = '';
+    savedFeedNodes = null;
+    updateHeaderActions();
+    return normalized;
 }
 
 function readSavedAvatarMode() {
@@ -2130,6 +2178,7 @@ function init() {
             console.error(e);
         }
     }
+    appConfig.image_mode = readSavedImageMode(appConfig.image_mode);
     appConfig.avatar_mode = readSavedAvatarMode();
     appConfig.hide_ads = readSavedHideAds();
     appConfig.sync_seen = readSavedSyncSeen();
@@ -4953,6 +5002,13 @@ function renderSettings() {
         } catch(e){}
     }
 
+    const imageMode = readSavedImageMode(cookies.image_mode);
+    appConfig.image_mode = imageMode;
+    appConfig.avatar_mode = avatarMode;
+    appConfig.hide_ads = hideAds;
+    appConfig.sync_seen = syncSeen;
+    syncRichBodyClass();
+
     let installedVersion = versionInfo.version || 'unknown';
     let installedSha = versionInfo.sha && versionInfo.sha !== 'local' ? ' · ' + versionInfo.sha : '';
     let hasNewApk = installedVersion !== 'unknown' && compareSemver(LATEST_APK_VERSION, installedVersion) > 0;
@@ -4963,6 +5019,11 @@ function renderSettings() {
         : 'Download APK Update (v' + escapeHtml(LATEST_APK_VERSION) + ')';
 
     container.innerHTML = `
+    <div class="thread-header">
+        <button type="button" class="back-btn" onclick="nav('feed')" aria-label="Back to feed">&larr;</button>
+        <div style="font-weight:700; font-size:16px;">Settings</div>
+    </div>
+
     <div class="card">
         <div class="card-title">Version & System Info</div>
         <div style="font-size:14px; line-height:1.8; margin-bottom:12px;">
@@ -5024,45 +5085,46 @@ function renderSettings() {
     </div>
 
     <div class="card">
-        <div class="card-title">Account Credentials</div>
+        <div class="card-title">Account &amp; Media Preferences</div>
         <p class="card-desc">
-            Stored locally in Android private storage.
+            Credentials are stored locally in Android private storage. Radio preferences below save automatically as soon as you tap them.
         </p>
         <form onsubmit="saveSettings(event)">
             <label style="font-size:13px; color:var(--text-muted); display:block; margin-bottom:4px;">auth_token</label>
-            <input type="password" id="cfgAuth" value="${escapeHtml(cookies.auth_token)}" class="form-input" placeholder="Paste auth_token" autocomplete="off" required>
+            <input type="password" id="cfgAuth" value="${escapeHtml(cookies.auth_token || appConfig.auth_token || '')}" class="form-input" placeholder="Paste auth_token" autocomplete="off" required>
 
             <label style="font-size:13px; color:var(--text-muted); display:block; margin-bottom:4px;">ct0 (csrf token)</label>
-            <input type="password" id="cfgCt0" value="${escapeHtml(cookies.ct0)}" class="form-input" placeholder="Paste ct0" autocomplete="off" required>
+            <input type="password" id="cfgCt0" value="${escapeHtml(cookies.ct0 || appConfig.ct0 || '')}" class="form-input" placeholder="Paste ct0" autocomplete="off" required>
 
             <div class="card-title" style="font-size:15px; margin: 16px 0 6px;">Image Mode</div>
-            <div style="font-size:14px; line-height:2; margin-bottom:16px;">
+            <div style="font-size:14px; line-height:2; margin-bottom:8px;">
                 <label style="display:block;">
-                    <input type="radio" name="imgMode" value="tap" ${cookies.image_mode === 'tap' ? 'checked' : ''}>
+                    <input type="radio" name="imgMode" value="tap" ${imageMode === 'tap' ? 'checked' : ''} onchange="handleSettingPrefChange('imgMode', this.value)">
                     Tap to load small previews (recommended for slow data)
                 </label>
                 <label style="display:block;">
-                    <input type="radio" name="imgMode" value="auto" ${cookies.image_mode === 'auto' ? 'checked' : ''}>
+                    <input type="radio" name="imgMode" value="auto" ${imageMode === 'auto' ? 'checked' : ''} onchange="handleSettingPrefChange('imgMode', this.value)">
                     Auto-load previews (full-res photos, HD video &amp; quotes; uses more data)
                 </label>
                 <label style="display:block;">
-                    <input type="radio" name="imgMode" value="off" ${cookies.image_mode === 'off' ? 'checked' : ''}>
+                    <input type="radio" name="imgMode" value="off" ${imageMode === 'off' ? 'checked' : ''} onchange="handleSettingPrefChange('imgMode', this.value)">
                     Text only (0 KB)
                 </label>
             </div>
+            <div id="settingsPrefNotice" role="status" aria-live="polite" style="font-size:12px; color:var(--accent); min-height:18px; margin-bottom:10px;"></div>
 
             <div class="card-title" style="font-size:15px; margin: 16px 0 6px;">Profile Pictures</div>
             <div style="font-size:14px; line-height:2; margin-bottom:16px;">
                 <label style="display:block;">
-                    <input type="radio" name="avatarMode" value="mini" ${avatarMode === 'mini' ? 'checked' : ''}>
+                    <input type="radio" name="avatarMode" value="mini" ${avatarMode === 'mini' ? 'checked' : ''} onchange="handleSettingPrefChange('avatarMode', this.value)">
                     Mini (24px · ~1.6 KB avg, cached)
                 </label>
                 <label style="display:block;">
-                    <input type="radio" name="avatarMode" value="normal" ${avatarMode === 'normal' ? 'checked' : ''}>
+                    <input type="radio" name="avatarMode" value="normal" ${avatarMode === 'normal' ? 'checked' : ''} onchange="handleSettingPrefChange('avatarMode', this.value)">
                     Standard (48px · ~2.4 KB avg, cached)
                 </label>
                 <label style="display:block;">
-                    <input type="radio" name="avatarMode" value="off" ${avatarMode === 'off' ? 'checked' : ''}>
+                    <input type="radio" name="avatarMode" value="off" ${avatarMode === 'off' ? 'checked' : ''} onchange="handleSettingPrefChange('avatarMode', this.value)">
                     Initials only (0 KB)
                 </label>
             </div>
@@ -5070,11 +5132,11 @@ function renderSettings() {
             <div class="card-title" style="font-size:15px; margin: 16px 0 6px;">Promoted Posts (Ads)</div>
             <div style="font-size:14px; line-height:2; margin-bottom:16px;">
                 <label style="display:block;">
-                    <input type="radio" name="hideAds" value="true" ${hideAds ? 'checked' : ''}>
+                    <input type="radio" name="hideAds" value="true" ${hideAds ? 'checked' : ''} onchange="handleSettingPrefChange('hideAds', this.value)">
                     Hide ads from feeds (recommended)
                 </label>
                 <label style="display:block;">
-                    <input type="radio" name="hideAds" value="false" ${!hideAds ? 'checked' : ''}>
+                    <input type="radio" name="hideAds" value="false" ${!hideAds ? 'checked' : ''} onchange="handleSettingPrefChange('hideAds', this.value)">
                     Show ads with an Ad badge
                 </label>
             </div>
@@ -5082,11 +5144,11 @@ function renderSettings() {
             <div class="card-title" style="font-size:15px; margin: 16px 0 6px;">Sync Seen Posts to X</div>
             <div style="font-size:14px; line-height:2; margin-bottom:16px;">
                 <label style="display:block;">
-                    <input type="radio" name="syncSeen" value="true" ${syncSeen ? 'checked' : ''}>
+                    <input type="radio" name="syncSeen" value="true" ${syncSeen ? 'checked' : ''} onchange="handleSettingPrefChange('syncSeen', this.value)">
                     Report scrolled posts to X (reduces repeats on laptop &amp; phone)
                 </label>
                 <label style="display:block;">
-                    <input type="radio" name="syncSeen" value="false" ${!syncSeen ? 'checked' : ''}>
+                    <input type="radio" name="syncSeen" value="false" ${!syncSeen ? 'checked' : ''} onchange="handleSettingPrefChange('syncSeen', this.value)">
                     Do not report seen posts to X
                 </label>
             </div>
@@ -5103,31 +5165,71 @@ function renderSettings() {
     </div>`;
 }
 
+function handleSettingPrefChange(kind, rawValue) {
+    let label = '';
+    if (kind === 'imgMode') {
+        const mode = saveImageModePref(rawValue);
+        const labels = {
+            auto: 'Auto-load previews (full-res photos & HD video)',
+            tap: 'Tap to load small previews',
+            off: 'Text only (0 KB)'
+        };
+        label = 'Image Mode: ' + (labels[mode] || mode);
+    } else if (kind === 'avatarMode') {
+        const mode = saveAvatarModePref(rawValue);
+        appConfig.avatar_mode = mode;
+        const labels = { mini: 'Mini (24px)', normal: 'Standard (48px)', off: 'Initials only' };
+        label = 'Profile Pictures: ' + (labels[mode] || mode);
+    } else if (kind === 'hideAds') {
+        const hide = saveHideAdsPref(rawValue === 'true');
+        appConfig.hide_ads = hide;
+        label = 'Promoted Posts: ' + (hide ? 'Hidden' : 'Shown with Ad badge');
+    } else if (kind === 'syncSeen') {
+        const sync = saveSyncSeenPref(rawValue === 'true');
+        appConfig.sync_seen = sync;
+        label = 'Sync Seen Posts: ' + (sync ? 'Enabled' : 'Disabled');
+    }
+    savedFeedMarkup = '';
+    savedFeedNodes = null;
+    const notice = document.getElementById('settingsPrefNotice');
+    if (notice && label) notice.textContent = 'Saved ✓ ' + label;
+    if (label) showStatus('Saved — ' + label, false, 1800);
+}
+
 function saveSettings(e) {
     e.preventDefault();
-    const auth = document.getElementById('cfgAuth').value.trim();
-    const ct0 = document.getElementById('cfgCt0').value.trim();
-    const mode = document.querySelector('input[name="imgMode"]:checked').value;
-    const avatarMode = saveAvatarModePref(document.querySelector('input[name="avatarMode"]:checked')?.value || 'mini');
-    const hideAds = saveHideAdsPref((document.querySelector('input[name="hideAds"]:checked')?.value || 'true') === 'true');
-    const syncSeen = saveSyncSeenPref((document.querySelector('input[name="syncSeen"]:checked')?.value || 'true') === 'true');
+    const authEl = document.getElementById('cfgAuth');
+    const ct0El = document.getElementById('cfgCt0');
+    const auth = authEl ? authEl.value.trim() : '';
+    const ct0 = ct0El ? ct0El.value.trim() : '';
+    const imgChecked = document.querySelector('input[name="imgMode"]:checked');
+    const mode = normalizeImageMode(imgChecked ? imgChecked.value : appConfig.image_mode);
+    const avatarChecked = document.querySelector('input[name="avatarMode"]:checked');
+    const avatarMode = saveAvatarModePref(avatarChecked ? avatarChecked.value : (appConfig.avatar_mode || 'mini'));
+    const hideAdsChecked = document.querySelector('input[name="hideAds"]:checked');
+    const hideAds = saveHideAdsPref((hideAdsChecked ? hideAdsChecked.value : String(appConfig.hide_ads !== false)) === 'true');
+    const syncSeenChecked = document.querySelector('input[name="syncSeen"]:checked');
+    const syncSeen = saveSyncSeenPref((syncSeenChecked ? syncSeenChecked.value : String(appConfig.sync_seen !== false)) === 'true');
 
     if (window.AndroidBridge) {
         if (auth !== appConfig.auth_token || ct0 !== appConfig.ct0) {
-            AndroidBridge.clearCache();
-            AndroidBridge.saveCache('bookmarks', '[]');
+            if (typeof AndroidBridge.clearCache === 'function') AndroidBridge.clearCache();
+            if (typeof AndroidBridge.saveCache === 'function') AndroidBridge.saveCache('bookmarks', '[]');
             bookmarksCache = [];
             viewerIdentity = null;
             seenForYouIds.clear();
             try { localStorage.removeItem(VIEWER_KEY); localStorage.removeItem(SEEN_FORYOU_KEY); } catch (_) {}
         }
-        AndroidBridge.saveConfig(auth, ct0, mode);
-        appConfig = { auth_token: auth, ct0: ct0, image_mode: mode, avatar_mode: avatarMode, hide_ads: hideAds, sync_seen: syncSeen };
-        syncRichBodyClass();
-        updateHeaderActions();
-        alert("Saved");
-        nav('feed');
+        if (typeof AndroidBridge.saveConfig === 'function') AndroidBridge.saveConfig(auth, ct0, mode);
     }
+    saveImageModePref(mode, { skipNative: true });
+    appConfig = { auth_token: auth, ct0: ct0, image_mode: mode, avatar_mode: avatarMode, hide_ads: hideAds, sync_seen: syncSeen };
+    syncRichBodyClass();
+    savedFeedMarkup = '';
+    savedFeedNodes = null;
+    updateHeaderActions();
+    alert("Saved");
+    nav('feed');
 }
 
 function compareSemver(a, b) {
