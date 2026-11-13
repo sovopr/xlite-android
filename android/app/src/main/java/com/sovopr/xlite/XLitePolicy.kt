@@ -25,6 +25,7 @@ object XLitePolicy {
     private val SEMVER_REGEX = Regex("^[0-9]+\\.[0-9]+\\.[0-9]+$")
     private val TRAILING_TWITTER_SIZE_REGEX = Regex(":(thumb|small|medium|large|orig)$")
     private val PROFILE_BANNER_SIZE_REGEX = Regex("/\\d+x\\d+$")
+    private val PROFILE_IMAGE_SIZE_REGEX = Regex("_(mini|normal|bigger|200x200|400x400)(\\.[a-z0-9]+)$", RegexOption.IGNORE_CASE)
     private val SHA256_LINE_REGEX = Regex("^([0-9a-fA-F]{64})\\s+\\*?(.+)$")
 
     private fun parseHttpsUrl(url: String): HttpUrl? {
@@ -232,6 +233,19 @@ object XLitePolicy {
             } else {
                 listOf("$origin$cleanPath/600x200", "$origin$cleanPath").distinct()
             }
+        }
+
+        if (cleanPath.startsWith("/profile_images/") && (mode == "rich" || mode == "hd")) {
+            val origPath = cleanPath.replace(PROFILE_IMAGE_SIZE_REGEX, "$2")
+            val dotIdx = origPath.lastIndexOf('.')
+            val base = if (dotIdx > 0) origPath.substring(0, dotIdx) else origPath
+            val ext = if (dotIdx > 0) origPath.substring(dotIdx) else ""
+            return listOf(
+                "$origin$origPath",
+                "$origin${base}_400x400$ext",
+                "$origin${base}_200x200$ext",
+                rawUrl
+            ).distinct()
         }
 
         val isVideoThumb = cleanPath.startsWith("/amplify_video_thumb/") ||
