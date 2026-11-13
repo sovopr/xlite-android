@@ -34,12 +34,13 @@ jobs:
           node scripts/post-actions.test.cjs
 
       - name: Decode Release Keystore
-        if: ${{ secrets.XLITE_KEYSTORE_B64 != '' }}
         env:
           XLITE_KEYSTORE_B64: ${{ secrets.XLITE_KEYSTORE_B64 }}
         run: |
-          echo "$XLITE_KEYSTORE_B64" | base64 --decode > "${{ runner.temp }}/release.keystore"
-          echo "XLITE_KEYSTORE_FILE=${{ runner.temp }}/release.keystore" >> "$GITHUB_ENV"
+          if [ -n "$XLITE_KEYSTORE_B64" ]; then
+            echo "$XLITE_KEYSTORE_B64" | base64 --decode > "${{ runner.temp }}/release.keystore"
+            echo "XLITE_KEYSTORE_FILE=${{ runner.temp }}/release.keystore" >> "$GITHUB_ENV"
+          fi
 
       - name: Build Release APK
         env:
