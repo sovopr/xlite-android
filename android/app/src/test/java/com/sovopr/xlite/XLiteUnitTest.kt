@@ -166,6 +166,21 @@ class XLiteUnitTest {
             videoThumb
         )
 
+        val richAvatar = XLitePolicy.buildImageCandidateUrls("https://pbs.twimg.com/profile_images/42/face_normal.jpg", "rich", "jpg")
+        assertEquals(
+            listOf(
+                "https://pbs.twimg.com/profile_images/42/face.jpg",
+                "https://pbs.twimg.com/profile_images/42/face_400x400.jpg",
+                "https://pbs.twimg.com/profile_images/42/face_200x200.jpg",
+                "https://pbs.twimg.com/profile_images/42/face_normal.jpg"
+            ),
+            richAvatar
+        )
+        assertEquals(
+            listOf("https://pbs.twimg.com/profile_images/42/face_mini.jpg"),
+            XLitePolicy.buildImageCandidateUrls("https://pbs.twimg.com/profile_images/42/face_mini.jpg", "thumb", "jpg")
+        )
+
         assertEquals("image/webp", XLitePolicy.detectImageMime(byteArrayOf('R'.code.toByte(), 'I'.code.toByte(), 'F'.code.toByte(), 'F'.code.toByte(), 0, 0, 0, 0, 'W'.code.toByte(), 'E'.code.toByte(), 'B'.code.toByte(), 'P'.code.toByte())))
         assertEquals("image/png", XLitePolicy.detectImageMime(byteArrayOf(0x89.toByte(), 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte())))
         assertEquals("image/jpeg", XLitePolicy.detectImageMime(byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte())))

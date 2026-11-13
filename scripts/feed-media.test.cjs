@@ -7,8 +7,8 @@ const html = fs.readFileSync(path.join(__dirname, '../android/app/src/main/asset
 const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)][1][1];
 const cache = new Map();
 const requests = [];
-const progress = { textContent: '', classList: { toggle(name, on) { this[name] = on; } } };
-const refresh = { disabled: false, innerHTML: '' };
+const progress = { textContent: '', style: {}, classList: { toggle(name, on) { this[name] = on; } } };
+const pullIndicator = { innerHTML: '', style: { height: '0px' }, classList: { toggle(name, on) { this[name] = on; } } };
 const loadMore = { disabled: false, textContent: 'Load More' };
 const location = { hash: '', pathname: '/index.html', search: '' };
 let restoredScrollY = -1;
@@ -27,7 +27,7 @@ const context = {
             if (id === 'mainContent') return main;
             if (id === 'feedContainer' && main.innerHTML.includes('id="feedContainer"')) return { insertAdjacentHTML() {} };
             if (id === 'feedProgress' && main.innerHTML.includes('id="feedProgress"')) return progress;
-            if (id === 'feedRefreshButton' && main.innerHTML.includes('id="feedRefreshButton"')) return refresh;
+            if (id === 'pullRefreshIndicator') return pullIndicator;
             return null;
         },
         querySelector(selector) {
@@ -123,22 +123,27 @@ cache.set('feed_following', JSON.stringify([{ id: 'old', text: 'Old cached post'
 cache.set('feed_cursor_following', 'saved-cursor');
 vm.runInContext(`currentView = 'feed'; currentTab = 'following'; cursors.following = 'saved-cursor'; loadFeed('following', true)`, context);
 assert.equal(requests.length, 1);
-assert.equal(refresh.disabled, true);
-assert.match(refresh.innerHTML, /inline-spinner/);
+assert.equal(vm.runInContext('pullRefreshState.refreshing', context), true);
+assert.match(pullIndicator.innerHTML, /inline-spinner/);
+assert.equal(pullIndicator.style.height, '42px');
+assert.doesNotMatch(main.innerHTML, /feedRefreshButton/, 'feed toolbar removes the old static Refresh button');
 assert.match(main.innerHTML, /Old cached post/);
 vm.runInContext('refreshFeed()', context);
 assert.equal(requests.length, 1, 'duplicate refresh is suppressed');
 requests.shift().callback(JSON.stringify({ tweets: [], error: 'Network unavailable' }));
-assert.equal(refresh.disabled, false);
+assert.equal(vm.runInContext('pullRefreshState.refreshing', context), false);
+assert.equal(pullIndicator.style.height, '0px');
 assert.equal(progress.classList.error, true);
-assert.match(progress.textContent, /Tap Refresh to retry/);
+assert.equal(progress.style.display, 'flex');
+assert.match(progress.textContent, /Pull down to retry/);
 assert.match(main.innerHTML, /Old cached post/, 'refresh failure keeps cached posts');
 assert.equal(vm.runInContext('cursors.following', context), 'saved-cursor');
 vm.runInContext('refreshFeed()', context);
 assert.equal(requests.length, 1);
-assert.equal(refresh.disabled, true);
+assert.equal(vm.runInContext('pullRefreshState.refreshing', context), true);
 requests.shift().callback(JSON.stringify({ tweets: [parsed], nextCursor: 'new-cursor' }));
-assert.equal(refresh.disabled, false);
+assert.equal(vm.runInContext('pullRefreshState.refreshing', context), false);
+assert.equal(progress.style.display, 'none');
 assert.equal(progress.textContent, 'Updated just now');
 assert.equal(vm.runInContext('cursors.following', context), 'new-cursor');
 assert.match(main.innerHTML, /Load poster frame/);
@@ -179,12 +184,12 @@ requests.length = 0;
 
 vm.runInContext('refreshFeed()', context);
 assert.equal(requests.length, 1);
-assert.equal(refresh.disabled, true);
+assert.equal(vm.runInContext('pullRefreshState.refreshing', context), true);
 context.scrollY = 400;
 vm.runInContext("viewThread('123')", context);
 assert.equal(requests.length, 2);
 vm.runInContext('goBackToFeed()', context);
-assert.equal(refresh.disabled, false, 'interrupted refresh no longer leaves a spinner');
+assert.equal(vm.runInContext('pullRefreshState.refreshing', context), false, 'interrupted refresh no longer leaves a spinner');
 assert.match(main.innerHTML, /page-two/);
 assert.equal(restoredScrollY, 400);
 requests[0].callback(JSON.stringify({ tweets: [], error: 'Late response' }));
@@ -584,7 +589,7 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
         return el;
     };
     const rMain = makeRichEl('mainContent');
-    ['mediaLightbox', 'lightboxImg', 'lightboxCounter', 'lightboxZoomBtn', 'lightboxPrev', 'lightboxNext', 'lightboxCaption', 'feedContainer', 'feedRefreshButton', 'feedProgress'].forEach(makeRichEl);
+    ['mediaLightbox', 'lightboxStage', 'lightboxImg', 'lightboxCounter', 'lightboxZoomBtn', 'lightboxPrev', 'lightboxNext', 'lightboxCaption', 'feedContainer', 'pullRefreshIndicator', 'scrollTopBtn', 'feedProgress'].forEach(makeRichEl);
 
     const postedTimelines = [];
     const formPosts = [];
@@ -767,7 +772,8 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
     assert.match(hdMultiHtml, /controls muted loop playsinline data-autoplay="1"/, 'Videos autoplay muted by default on X-like timeline');
     assert.doesNotMatch(hdMultiHtml, /video-meta-row|video-hd-btn|HD ✓/, 'Video card omits bottom Video/HD bar');
     assert.match(hdMultiHtml, /poster\.jpg[^"]*mode=rich/, 'Auto mode requests high-res video poster');
-    assert.match(hdMultiHtml, /pfp_bigger\.jpg[^"]*mode=rich/, 'Auto mode upgrades normal avatars cleanly');
+    assert.match(hdMultiHtml, /55%2Fpfp\.jpg[^"]*mode=rich/, 'Auto mode defaults normal avatars to full original resolution');
+    assert.match(hdMultiHtml, /data-fallback-src="https:\/\/local\.xlite\/img\?url=https%3A%2F%2Fpbs\.twimg\.com%2Fprofile_images%2F55%2Fpfp_400x400\.jpg/, 'Full-res avatar retains 400x400 fallback');
     assert.match(hdMultiHtml, /quotedpic\.jpg[^"]*mode=rich/, 'Auto mode renders media inside quoted tweets');
 
     // Disabling Video Autoplay disables muted autoplay attrs & mute button while keeping plain container
@@ -888,6 +894,263 @@ assert.equal(typeof autoImage.retryButton.onclick, 'function');
     assert.match(repliesHtml, /Replying to .*@deleteduser/, 'Orphaned reply still shows who it replied to');
     assert.match(repliesHtml, /reddit-children/, 'Nested children wrapped inside thread guide container');
     assert.match(repliesHtml, /data-desc-count="2"/, 'Collapse button tracks descendant count');
+})();
+
+(() => {
+    // v1.0.28 UX fixes: duplicate @ stripping, Community Notes, pull-to-refresh, lightbox swipe, logo click, scroll-to-top, search blur
+    const domMap = new Map();
+    const docListeners = new Map();
+    const statusLog = [];
+    const makeEl = (id, tag = 'div') => {
+        const classes = new Set();
+        const listeners = new Map();
+        const el = {
+            id, tagName: tag.toUpperCase(), innerHTML: '', textContent: '', value: '', disabled: false,
+            scrollTop: 0, scrollLeft: 0,
+            style: { height: '0px', display: 'none', transform: '', opacity: '', background: '' },
+            dataset: {},
+            removeAttribute(k) { delete el[k]; },
+            classList: {
+                add: (...c) => c.forEach(x => classes.add(x)),
+                remove: (...c) => c.forEach(x => classes.delete(x)),
+                toggle: (c, on) => { const next = on === undefined ? !classes.has(c) : !!on; if (next) classes.add(c); else classes.delete(c); return next; },
+                contains: c => classes.has(c)
+            },
+            addEventListener: (ev, fn) => {
+                if (!listeners.has(ev)) listeners.set(ev, []);
+                listeners.get(ev).push(fn);
+            },
+            dispatch(ev, payload = {}) {
+                for (const fn of (listeners.get(ev) || [])) fn(payload);
+            }
+        };
+        domMap.set(id, el);
+        return el;
+    };
+
+    const mainEl = makeEl('mainContent');
+    const pullEl = makeEl('pullRefreshIndicator');
+    const scrollBtn = makeEl('scrollTopBtn', 'button');
+    const modalEl = makeEl('mediaLightbox');
+    const stageEl = makeEl('lightboxStage');
+    const lbImg = makeEl('lightboxImg', 'img');
+    makeEl('lightboxCounter');
+    makeEl('lightboxZoomBtn', 'button');
+    makeEl('lightboxPrev', 'button');
+    makeEl('lightboxNext', 'button');
+    makeEl('lightboxCaption');
+    makeEl('feedProgress');
+    makeEl('statusBar');
+    const searchInputEl = makeEl('searchInput', 'input');
+    let searchBlurCalls = 0;
+    searchInputEl.blur = () => { searchBlurCalls += 1; };
+    const searchResultsEl = makeEl('searchResults');
+    const searchBtnEl = makeEl('searchBtn', 'button');
+    const tabNavEl = makeEl('tabNav');
+
+    const getPosts = [];
+    const scrollCalls = [];
+    let currentMockScrollY = 0;
+    const ctx = vm.createContext({
+        console, setTimeout, clearTimeout, Date, Math, JSON, URL, encodeURIComponent, decodeURIComponent, Set, Map,
+        localStorage: (() => {
+            const m = new Map();
+            return { getItem: k => m.get(k) || null, setItem: (k, v) => m.set(k, String(v)), removeItem: k => m.delete(k) };
+        })(),
+        history: { scrollRestoration: 'auto', state: null, replaceState() {}, pushState() {} },
+        window: {
+            location: { hash: '', pathname: '/', search: '' },
+            get scrollY() { return currentMockScrollY; },
+            addEventListener() {},
+            scrollTo(opts) { scrollCalls.push(opts); currentMockScrollY = typeof opts === 'object' ? (opts.top || 0) : (arguments[1] || 0); }
+        },
+        document: {
+            get activeElement() { return searchInputEl; },
+            body: { classList: { toggle() {} } },
+            documentElement: { scrollTop: 0 },
+            getElementById: id => domMap.get(id) || null,
+            querySelector: () => null,
+            querySelectorAll: () => [],
+            addEventListener: (ev, fn) => {
+                if (!docListeners.has(ev)) docListeners.set(ev, []);
+                docListeners.get(ev).push(fn);
+            }
+        },
+        AndroidBridge: null
+    });
+    Object.defineProperty(ctx, 'scrollY', { get: () => currentMockScrollY });
+    ctx.scrollTo = ctx.window.scrollTo;
+    ctx.window.document = ctx.document;
+    const mockCache = new Map();
+    ctx.window.AndroidBridge = ctx.AndroidBridge = {
+        getCookies: () => JSON.stringify({ auth_token: 'tok', ct0: 'csrf', image_mode: 'auto' }),
+        getCache: k => mockCache.get(k) || '',
+        saveCache: (k, v) => mockCache.set(k, String(v)),
+        executeGetAsync: (url, cbId) => { getPosts.push({ url, cbId }); },
+        executePostWithTransactionAsync: (url, payload, _tid, cbId) => { getPosts.push({ url, payload, cbId }); }
+    };
+    vm.runInContext(script, ctx);
+    vm.runInContext(`
+        showStatus = (msg) => { recordedStatuses.push(msg); };
+        tabNav;
+    `, Object.assign(ctx, { recordedStatuses: statusLog, tabNav: tabNavEl }));
+
+    // 1. Duplicate @mention stripping with display_text_range + Replying to suppression
+    const mentionTweet = ctx.parseSingleTweet({
+        rest_id: 'm1',
+        core: { user_results: { result: { rest_id: 'u1', core: { name: 'Bob', screen_name: 'bob' } } } },
+        legacy: {
+            full_text: '@letterboxd @friend Actually my favorite film is Alien',
+            display_text_range: [20, 52],
+            in_reply_to_screen_name: 'letterboxd'
+        }
+    });
+    assert.equal(mentionTweet.text, 'Actually my favorite film is Alien', 'strips API-prefixed hidden reply mentions covered by display_text_range');
+    assert.equal(ctx.startsWithMention('@letterboxd hello', 'letterboxd'), true);
+    assert.equal(ctx.startsWithMention('@letterboxdFan hello', 'letterboxd'), false);
+
+    // 1b. Reply text explicitly starting with @target omits redundant "Replying to @target" cue
+    const explicitMentionReply = {
+        id: 'm2',
+        user_name: 'Langa',
+        user_screen_name: 'itsxlanga_',
+        in_reply_to_id: 'root1',
+        in_reply_to_screen_name: 'letterboxd',
+        text: '@letterboxd Four favorites right here',
+        media: []
+    };
+    const explicitReplyHtml = ctx.renderRedditReplyNode({ tweet: explicitMentionReply, children: [] }, 0, null, new Map());
+    assert.doesNotMatch(explicitReplyHtml, /Replying to @letterboxd/, 'suppresses duplicate Replying to @user when text opens with @user');
+    assert.match(explicitReplyHtml, /@letterboxd/);
+
+    // 2. Community Notes (birdwatch_pivot on outer wrapper + rich entities + XSS safety)
+    const noteTextSample = 'This video shows a movie set from 2019, not a live launch. Source <unsafe>';
+    const srcStart = noteTextSample.indexOf('Source');
+    const badStart = noteTextSample.indexOf('<unsafe>');
+    const noteWrapperRaw = {
+        __typename: 'TweetWithVisibilityResults',
+        birdwatch_pivot: {
+            shorttitle: 'Readers added context',
+            subtitle: {
+                text: noteTextSample,
+                entities: [
+                    { fromIndex: srcStart, toIndex: srcStart + 6, ref: { url: 'https://example.org/factcheck' } },
+                    { fromIndex: badStart, toIndex: badStart + 8, ref: { url: 'javascript:alert(1)' } }
+                ]
+            },
+            footer: { text: 'Rate whether this context is helpful' },
+            destinationUrl: 'https://x.com/i/birdwatch/n/9988'
+        },
+        tweet: {
+            rest_id: 'cn1',
+            core: { user_results: { result: { rest_id: 'u2', core: { name: 'Claim', screen_name: 'claim' } } } },
+            legacy: {
+                full_text: 'Look at this live launch! https://t.co/q1',
+                entities: { urls: [{ url: 'https://t.co/q1', expanded_url: 'https://x.com/quoted/status/cnq1' }] }
+            },
+            quoted_status_result: {
+                result: {
+                    rest_id: 'cnq1',
+                    core: { user_results: { result: { rest_id: 'u3', core: { name: 'Q', screen_name: 'quser' } } } },
+                    birdwatch_pivot: {
+                        title: 'Context from readers',
+                        subtitle: { text: 'Quoted claim is satirical.' }
+                    },
+                    legacy: { full_text: 'Original satirical claim' }
+                }
+            }
+        }
+    };
+    const cnTimeline = ctx.parseTwitterGraphql(JSON.stringify({
+        data: { home: { home_timeline_urt: { instructions: [{ type: 'TimelineAddEntries', entries: [
+            { entryId: 'tweet-cn1', content: { itemContent: { itemType: 'TimelineTweet', tweet_results: { result: noteWrapperRaw } } } }
+        ] }] } } }
+    }));
+    assert.equal(cnTimeline.tweets.length, 1);
+    const cnTweet = cnTimeline.tweets[0];
+    assert.equal(cnTweet.community_note.title, 'Readers added context');
+    assert.equal(cnTweet.community_note.entities.length, 1, 'drops javascript: entity links while keeping https: entity links');
+    assert.equal(cnTweet.quoted.community_note.title, 'Context from readers');
+    const cnHtml = ctx.renderTweetHtml(cnTweet);
+    assert.match(cnHtml, /class="community-note"/);
+    assert.match(cnHtml, /href="https:\/\/example\.org\/factcheck"/, 'renders clickable https entity link inside note');
+    assert.match(cnHtml, /href="https:\/\/x\.com\/i\/birdwatch\/n\/9988"/, 'renders View note destination link');
+    assert.match(cnHtml, /&lt;unsafe&gt;/, 'escapes HTML characters inside Community Note text');
+    assert.doesNotMatch(cnHtml, /javascript:/, 'blocks unsafe URI schemes in Community Note entities');
+    assert.match(cnHtml, /Quoted claim is satirical\./, 'renders Community Note inside quoted tweet');
+    assert.match(ctx.renderRedditReplyNode({ tweet: cnTweet, children: [] }, 0, null, new Map()), /class="community-note"/, 'renders Community Note inside Reddit reply nodes');
+
+    // 3. Brand logo click never emits "Showing recent cached tweets" & scrolls or refreshes
+    vm.runInContext(`
+        currentView = 'feed';
+        currentTab = 'following';
+        refreshFeed = () => { logoRefreshedCount++; };
+    `, Object.assign(ctx, { logoRefreshedCount: 0 }));
+    currentMockScrollY = 400;
+    ctx.onBrandLogoClick();
+    assert.equal(scrollCalls.length, 1, 'tapping X Lite when scrolled down smoothly scrolls to top');
+    assert.equal(currentMockScrollY, 0);
+    assert.equal(ctx.logoRefreshedCount, 0);
+    ctx.onBrandLogoClick();
+    assert.equal(ctx.logoRefreshedCount, 1, 'tapping X Lite at top on feed triggers fresh timeline load');
+    assert.equal(statusLog.some(m => /Showing recent cached/i.test(m)), false, 'no stale cached tweets banner on logo tap');
+    mockCache.set('feed_following', JSON.stringify([cnTweet]));
+    mockCache.set('feed_following_ts', String(Date.now()));
+    vm.runInContext("loadFeed('following', false)", ctx);
+    assert.equal(statusLog.some(m => /Showing recent cached/i.test(m)), false, 'cached feed render never triggers Showing recent cached banner');
+
+    // 4. Floating scroll-to-top button visibility
+    currentMockScrollY = 120;
+    ctx.updateScrollTopButton();
+    assert.equal(scrollBtn.classList.contains('visible'), false);
+    currentMockScrollY = 620;
+    ctx.updateScrollTopButton();
+    assert.equal(scrollBtn.classList.contains('visible'), true, 'scroll-to-top button appears after scrolling down past 500px');
+    vm.runInContext("currentView = 'settings'", ctx);
+    ctx.updateScrollTopButton();
+    assert.equal(scrollBtn.classList.contains('visible'), false, 'hidden on settings screen');
+    vm.runInContext("currentView = 'feed'; currentTab = 'following';", ctx);
+
+    // 5. Pull-to-refresh gesture (>= 48px pulled triggers refreshFeed)
+    ctx.initPullToRefresh();
+    currentMockScrollY = 0;
+    vm.runInContext(`pullRefreshState.refreshing = false; isFetching = false; refreshFeed = () => { pullTriggeredCount++; setFeedProgress(true, 'Refreshing...'); };`, Object.assign(ctx, { pullTriggeredCount: 0 }));
+    const fireDocTouch = (ev, clientX, clientY) => {
+        for (const fn of (docListeners.get(ev) || [])) {
+            fn({ touches: ev === 'touchend' ? [] : [{ clientX, clientY }], target: mainEl, cancelable: true, preventDefault() {} });
+        }
+    };
+    fireDocTouch('touchstart', 180, 100);
+    fireDocTouch('touchmove', 180, 240);
+    assert.equal(pullEl.classList.contains('ready'), true, 'dragging >= 107px arm threshold enters ready state');
+    fireDocTouch('touchend', 180, 240);
+    assert.equal(ctx.pullTriggeredCount, 1, 'pulling down to refresh invokes refreshFeed');
+    assert.equal(pullEl.classList.contains('refreshing'), true);
+    ctx.setFeedProgress(false, '');
+    assert.equal(pullEl.style.height, '0px', 'pull indicator collapses after refresh completion');
+
+    // 6. Image lightbox swipe-down dismissal
+    vm.runInContext(`allTweetsMap['lb1'] = { id: 'lb1', media: [{ type: 'photo', url: 'https://pbs.twimg.com/media/lb.jpg', alt_text: 'Sample' }] };`, ctx);
+    ctx.initLightboxGestures();
+    ctx.openLightbox('lb1', 0);
+    assert.equal(modalEl.classList.contains('open'), true);
+    modalEl.dispatch('touchstart', { touches: [{ clientX: 180, clientY: 200 }] });
+    modalEl.dispatch('touchmove', { touches: [{ clientX: 184, clientY: 325 }], cancelable: true, preventDefault() {} });
+    assert.equal(modalEl.classList.contains('dragging'), true);
+    assert.match(lbImg.style.transform, /translate3d\(0, 125px, 0\)/);
+    modalEl.dispatch('touchend', {});
+    assert.equal(modalEl.classList.contains('open'), false, 'swiping down on photo closes lightbox');
+    assert.equal(vm.runInContext('lightboxState', ctx), null);
+
+    // 7. Search blurs #searchInput before & after rendering results so keyboard never pops back up
+    searchInputEl.value = 'SpaceX';
+    searchBlurCalls = 0;
+    vm.runInContext(`searchTransactionClient = { generateTransactionId: (m, p) => 'tid:' + m + ':' + p }; searchTransactionFetchedAt = Date.now();`, ctx);
+    ctx.renderSearchResults('SpaceX', [cnTweet], searchResultsEl);
+    assert.ok(searchBlurCalls >= 1, 'renderSearchResults blurs #searchInput');
+    assert.equal(searchBtnEl.disabled, false);
+    vm.runInContext(`executeSearch({ preventDefault() {} })`, ctx);
+    assert.ok(searchBlurCalls >= 2, 'executeSearch blurs #searchInput immediately on submit');
 })();
 
 (() => {
