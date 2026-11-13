@@ -84,6 +84,7 @@ class MainActivity : AppCompatActivity() {
 
         bridge = TwitterBridge(this)
         videoStreamProxy = VideoStreamProxy.get(this)
+        cacheCleanupExecutor.execute { videoStreamProxy.getProxyPort() }
         webView.addJavascriptInterface(bridge, "AndroidBridge")
 
         val imgCacheDir = File(cacheDir, "images")
@@ -105,24 +106,15 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?
             ): WebResourceResponse? {
                 val url = request?.url ?: return null
-                if (url.scheme == "https" && url.host == "local.xlite") {
-                    if (url.path == "/img") {
-                        val targetUrl = url.getQueryParameter("url") ?: return null
-                        val mode = url.getQueryParameter("mode") ?: "thumb"
-                        return handleImageRequest(targetUrl, mode, imgCacheDir)
-                            ?: WebResourceResponse(
-                                "image/webp", "UTF-8", 503, "Image unavailable",
-                                mapOf("Cache-Control" to "no-store"),
-                                ByteArrayInputStream(ByteArray(0))
-                            )
-                    }
-                    if (url.path == "/vid") {
-                        val targetUrl = url.getQueryParameter("url") ?: return null
-                        val range = request.requestHeaders?.entries
-                            ?.firstOrNull { it.key.equals("Range", ignoreCase = true) }
-                            ?.value
-                        return videoStreamProxy.handleRequest(targetUrl, range)
-                    }
+                if (url.scheme == "https" && url.host == "local.xlite" && url.path == "/img") {
+                    val targetUrl = url.getQueryParameter("url") ?: return null
+                    val mode = url.getQueryParameter("mode") ?: "thumb"
+                    return handleImageRequest(targetUrl, mode, imgCacheDir)
+                        ?: WebResourceResponse(
+                            "image/webp", "UTF-8", 503, "Image unavailable",
+                            mapOf("Cache-Control" to "no-store"),
+                            ByteArrayInputStream(ByteArray(0))
+                        )
                 }
                 return super.shouldInterceptRequest(view, request)
             }

@@ -1952,9 +1952,9 @@ let isFetching = false;
 let pendingCallbacks = {};
 const pendingActionLocks = {};
 const activeImageLoads = new Set();
-const APP_VERSION = '1.0.30';
-const APP_BUILD = '2026.11.13.15';
-const LATEST_APK_VERSION = '1.0.30';
+const APP_VERSION = '1.0.31';
+const APP_BUILD = '2026.11.13.16';
+const LATEST_APK_VERSION = '1.0.31';
 const LATEST_APK_URL = 'https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk';
 const LATEST_APK_SHA256 = '';
 let activeApkDownloadState = null;
@@ -2307,8 +2307,18 @@ function supportsRichModeNative() {
     return !window.AndroidBridge || typeof AndroidBridge.takeTempResult === 'function';
 }
 
+function getVideoProxyPortSafe() {
+    if (window.AndroidBridge && typeof AndroidBridge.getVideoProxyPort === 'function') {
+        try {
+            const port = Number(AndroidBridge.getVideoProxyPort());
+            if (Number.isInteger(port) && port > 0 && port <= 65535) return port;
+        } catch (_) {}
+    }
+    return 0;
+}
+
 function supportsVideoProxyNative() {
-    return !!(window.AndroidBridge && typeof AndroidBridge.prefetchVideo === 'function');
+    return getVideoProxyPortSafe() > 0;
 }
 
 function supportsSignedPostTimelines() {
@@ -2826,7 +2836,7 @@ function attachVideoBufferingMonitor(vid) {
             if (!vid.paused && !vid.ended && vid.readyState < 3 && vid.dataset?.fallbackSrc) {
                 fallbackVideoSource(vid, true);
             }
-        }, 2200);
+        }, 1800);
     };
     const clearStall = () => clearVideoStallTimer(vid);
     vid.addEventListener('waiting', scheduleStallDowngrade);
@@ -2859,7 +2869,7 @@ function initVideoAutoPauseObserver(rootEl) {
     if (!container || typeof container.querySelectorAll !== 'function') return;
     const videos = Array.from(container.querySelectorAll('video.tweet-video'));
     if (!videos.length) return;
-    prefetchUpcomingVideos(container, 2);
+    prefetchUpcomingVideos(container, 3);
     videos.forEach(attachVideoBufferingMonitor);
     if (typeof IntersectionObserver !== 'function') return;
 
@@ -2871,7 +2881,7 @@ function initVideoAutoPauseObserver(rootEl) {
             if (!entry.isIntersecting) return;
             const vid = entry.target;
             if (vid.dataset?.prefetchUrl) requestNativeVideoPrefetch(vid.dataset.prefetchUrl);
-            if (vid.preload === 'none') {
+            if (vid.preload !== 'auto') {
                 if (activeAutoPreloads < MAX_AUTO_PRELOADS) {
                     vid.preload = 'auto';
                     activeAutoPreloads++;
@@ -3765,8 +3775,9 @@ function localImageUrl(url, mode, fresh = false) {
 function localVideoUrl(rawUrl) {
     const clean = safeHttpsUrl(rawUrl, ['video.twimg.com']);
     if (!clean) return '';
-    return supportsVideoProxyNative()
-        ? 'https://local.xlite/vid?url=' + encodeURIComponent(clean)
+    const port = getVideoProxyPortSafe();
+    return port > 0
+        ? `http://127.0.0.1:${port}/vid?url=` + encodeURIComponent(clean)
         : clean;
 }
 
@@ -4199,9 +4210,14 @@ function fallbackVideoSource(vid, forcePlay = false) {
     const fallbackSrc = vid.dataset.fallbackSrc;
     if (!fallbackSrc) return;
     const nextFallback = vid.dataset.fallbackSd || '';
+    const nextDirect = vid.dataset.fallbackDirect || '';
     if (nextFallback) {
         vid.dataset.fallbackSrc = nextFallback;
-        vid.dataset.fallbackSd = '';
+        vid.dataset.fallbackSd = nextDirect;
+        vid.dataset.fallbackDirect = '';
+    } else if (nextDirect) {
+        vid.dataset.fallbackSrc = nextDirect;
+        vid.dataset.fallbackDirect = '';
     } else {
         if (vid.dataset.fallbackApplied === '1') return;
         vid.dataset.fallbackApplied = '1';
@@ -4212,6 +4228,7 @@ function fallbackVideoSource(vid, forcePlay = false) {
     const wasPlaying = !vid.paused || !!forcePlay;
     vid.preload = 'auto';
     vid.src = fallbackSrc;
+    try { if (typeof vid.load === 'function') vid.load(); } catch (_) {}
     if (curTime > 0 || wasPlaying) {
         vid.addEventListener?.('loadedmetadata', () => {
             try { if (curTime > 0) vid.currentTime = curTime; } catch (_) {}
@@ -4288,15 +4305,25 @@ function renderMediaHtml(tw) {
                 const srcUrl = localVideoUrl(initialRaw);
                 const fallbackUrl = fallbackRaw ? localVideoUrl(fallbackRaw) : '';
                 const sdUrl = sdRaw ? localVideoUrl(sdRaw) : '';
-                const fallbackAttrs = fallbackUrl
-                    ? ` data-fallback-src="${escapeHtml(fallbackUrl)}"${sdUrl ? ` data-fallback-sd="${escapeHtml(sdUrl)}"` : ''} onerror="fallbackVideoSource(this)"`
+                const directTail = (srcUrl && srcUrl.startsWith('http://127.0.0.1:'))
+                    ? (sdRaw || fallbackRaw || initialRaw)
                     : '';
+                const queue = [fallbackUrl, sdUrl, directTail].filter(
+                    (u, idx, arr) => u && u !== srcUrl && arr.indexOf(u) === idx
+                );
+                let fallbackAttrs = '';
+                if (queue.length > 0) {
+                    fallbackAttrs = ` data-fallback-src="${escapeHtml(queue[0])}"`;
+                    if (queue.length > 1) fallbackAttrs += ` data-fallback-sd="${escapeHtml(queue[1])}"`;
+                    if (queue.length > 2) fallbackAttrs += ` data-fallback-direct="${escapeHtml(queue[2])}"`;
+                    fallbackAttrs += ' onerror="fallbackVideoSource(this)"';
+                }
                 const autoplayEnabled = isGif || shouldAutoplayVideos();
                 const videoAttrs = isGif
                     ? 'autoplay loop muted playsinline data-autoplay="1" data-is-gif="1" preload="metadata"'
                     : (autoplayEnabled
-                        ? 'controls muted loop playsinline data-autoplay="1" preload="none" onplay="pauseOtherVideos(this)"'
-                        : 'controls playsinline preload="none" onplay="pauseOtherVideos(this)"');
+                        ? 'controls muted loop playsinline data-autoplay="1" preload="metadata" onplay="pauseOtherVideos(this)"'
+                        : 'controls playsinline preload="metadata" onplay="pauseOtherVideos(this)"');
                 out += `
                 <div class="video-wrap">
                     <video id="${vidId}" class="tweet-video" ${videoAttrs} poster="${posterSrc}" data-prefetch-url="${escapeHtml(initialRaw)}" src="${escapeHtml(srcUrl)}"${fallbackAttrs}></video>

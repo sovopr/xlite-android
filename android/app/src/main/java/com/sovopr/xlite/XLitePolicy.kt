@@ -32,6 +32,25 @@ object XLitePolicy {
 
     data class ByteRange(val start: Long, val end: Long?)
 
+    data class LoopbackVideoRequest(
+        val method: String,
+        val targetUrl: String,
+        val rangeHeader: String?
+    )
+
+    sealed class LoopbackParseResult {
+        data class Ok(val request: LoopbackVideoRequest) : LoopbackParseResult()
+        data class Preflight(val allowMethods: String = "GET, HEAD, OPTIONS") : LoopbackParseResult()
+        data class Error(val statusCode: Int, val reason: String) : LoopbackParseResult()
+    }
+
+    sealed class RangeResolution {
+        data class Full(val start: Long, val end: Long, val contentLength: Long) : RangeResolution()
+        data class Partial(val start: Long, val end: Long, val contentLength: Long, val totalLength: Long) : RangeResolution()
+        data class Unsatisfiable(val totalLength: Long) : RangeResolution()
+        object InvalidHeaderFormat : RangeResolution()
+    }
+
     private fun parseHttpsUrl(url: String): HttpUrl? {
         val trimmed = url.trim()
         if (trimmed.isEmpty()) return null
@@ -121,6 +140,54 @@ object XLitePolicy {
         val trimmed = header?.trim() ?: return null
         val match = CONTENT_RANGE_TOTAL_REGEX.matchEntire(trimmed) ?: return null
         return match.groupValues[1].toLongOrNull()?.takeIf { it > 0L }
+    }
+
+    /** Parses and authorizes an HTTP/1.1 loopback proxy request line ("METHOD /vid?url=... HTTP/1.1"). */
+    fun parseLoopbackVideoRequest(requestLine: String?, headers: Map<String, String>): LoopbackParseResult {
+        val line = requestLine?.trim() ?: return LoopbackParseResult.Error(400, "Bad Request")
+        val parts = line.split(' ').filter { it.isNotEmpty() }
+        if (parts.size != 3 || !parts[2].startsWith("HTTP/1.", ignoreCase = true)) {
+            return LoopbackParseResult.Error(400, "Bad Request")
+        }
+        val method = parts[0].uppercase()
+        if (method == "OPTIONS") {
+            return LoopbackParseResult.Preflight()
+        }
+        if (method != "GET" && method != "HEAD") {
+            return LoopbackParseResult.Error(405, "Method Not Allowed")
+        }
+        val target = parts[1]
+        if (!target.startsWith("/")) {
+            return LoopbackParseResult.Error(400, "Bad Request")
+        }
+        val parsed = "http://127.0.0.1$target".toHttpUrlOrNull()
+            ?: return LoopbackParseResult.Error(400, "Bad Request")
+        if (parsed.encodedPath != "/vid") {
+            return LoopbackParseResult.Error(404, "Not Found")
+        }
+        val targetUrl = parsed.queryParameter("url")?.trim().orEmpty()
+        if (!isAllowedVideoUrl(targetUrl)) {
+            return LoopbackParseResult.Error(403, "Forbidden")
+        }
+        val rangeHeader = headers.entries
+            .lastOrNull { it.key.equals("Range", ignoreCase = true) }
+            ?.value?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        return LoopbackParseResult.Ok(LoopbackVideoRequest(method, targetUrl, rangeHeader))
+    }
+
+    /** Resolves an optional Range request against a known positive resource length. */
+    fun resolveCachedByteRange(rangeHeader: String?, totalLength: Long): RangeResolution {
+        if (totalLength <= 0L) return RangeResolution.InvalidHeaderFormat
+        if (rangeHeader.isNullOrBlank()) {
+            return RangeResolution.Full(0L, totalLength - 1L, totalLength)
+        }
+        val parsed = parseByteRange(rangeHeader) ?: return RangeResolution.InvalidHeaderFormat
+        if (parsed.start >= totalLength) {
+            return RangeResolution.Unsatisfiable(totalLength)
+        }
+        val end = minOf(parsed.end ?: (totalLength - 1L), totalLength - 1L)
+        return RangeResolution.Partial(parsed.start, end, end - parsed.start + 1L, totalLength)
     }
 
     fun isValidSemver(version: String): Boolean = SEMVER_REGEX.matches(version.trim())
