@@ -1612,11 +1612,13 @@ let isFetching = false;
 let pendingCallbacks = {};
 const pendingActionLocks = {};
 const activeImageLoads = new Set();
-const APP_VERSION = '1.0.22';
-const APP_BUILD = '2026.11.13.7';
-const LATEST_APK_VERSION = '1.0.22';
+const APP_VERSION = '1.0.23';
+const APP_BUILD = '2026.11.13.8';
+const LATEST_APK_VERSION = '1.0.23';
 const LATEST_APK_URL = 'https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk';
 let activeApkDownloadState = null;
+let pendingWebReloadVersion = '';
+let pendingApkDownload = null;
 try { if (typeof history !== 'undefined' && 'scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch (e) {}
 const FEED_REFRESH_MS = 5 * 60 * 1000;
 const FEED_PAGE_SIZE = 6;
@@ -4865,6 +4867,12 @@ function renderSettings() {
         <button type="button" class="btn btn-secondary btn-block" id="cancelApkUpdateBtn" onclick="cancelNativeApkUpdate()" style="margin-top:8px; font-size:13px; display:${isApkDownloading ? 'block' : 'none'};">
             Cancel Download
         </button>
+        <button type="button" class="btn btn-secondary btn-block" id="apkBrowserFallbackBtn" onclick="openApkDownloadInBrowser()" style="margin-top:8px; font-size:13px; display:${hasNewApk && !isApkDownloading ? 'block' : 'none'};">
+            Open Download in Browser (v${escapeHtml(LATEST_APK_VERSION)})
+        </button>
+        <button type="button" class="btn btn-block" id="reloadWebUpdateBtn" onclick="reloadSavedWebUpdate()" style="margin-top:8px; font-size:13px; display:${pendingWebReloadVersion && !isApkDownloading ? 'block' : 'none'};">
+            Apply Saved Web UI (v${escapeHtml(pendingWebReloadVersion || APP_VERSION)})
+        </button>
         ${hasNewApk ? `
         <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border);">
             <div style="font-size:13px; color:var(--accent); font-weight:700; margin-bottom:6px;">
@@ -4872,7 +4880,7 @@ function renderSettings() {
             </div>
             <p class="card-desc" style="margin-bottom:10px;">
                 ${supportsInAppApk
-                    ? 'Installed APK is v' + escapeHtml(installedVersion) + '. Tap below (or Check &amp; Install Updates) to install v' + escapeHtml(LATEST_APK_VERSION) + ' in-app.'
+                    ? 'Installed APK is v' + escapeHtml(installedVersion) + '. Tap below (or use Open Download in Browser if GitHub repo is private) to install v' + escapeHtml(LATEST_APK_VERSION) + '.'
                     : 'Installed APK is v' + escapeHtml(installedVersion) + '. Install v' + escapeHtml(LATEST_APK_VERSION) + ' once so future updates run completely in-app from this button.'}
             </p>
             <button type="button" class="btn btn-block" id="apkUpdateBtn" onclick="downloadApkUpdate()" ${isApkDownloading ? 'disabled' : ''}>
@@ -5006,13 +5014,38 @@ function formatBytesMb(bytes) {
 }
 
 function resolveApkDownloadUrl(apkVersion, candidateUrl) {
-    if (candidateUrl && /^https:\/\/github\.com\/sovopr\/xlite-android\/releases\/download\/v[0-9]+\.[0-9]+\.[0-9]+\/xlite-fup-release\.apk$/.test(candidateUrl)) {
+    if (candidateUrl && /^https:\/\/github\.com\/sovopr\/xlite-(?:android|releases)\/releases\/download\/v[0-9]+\.[0-9]+\.[0-9]+\/xlite-fup-release\.apk$/.test(candidateUrl)) {
         return candidateUrl;
     }
     if (apkVersion && /^[0-9]+\.[0-9]+\.[0-9]+$/.test(apkVersion)) {
         return 'https://github.com/sovopr/xlite-android/releases/download/v' + apkVersion + '/xlite-fup-release.apk';
     }
     return candidateUrl || LATEST_APK_URL;
+}
+
+function openApkDownloadInBrowser(targetVersion, targetUrl) {
+    const ver = targetVersion || (pendingApkDownload && pendingApkDownload.version) || LATEST_APK_VERSION;
+    const candidate = targetUrl || (pendingApkDownload && pendingApkDownload.url) || '';
+    const resolved = resolveApkDownloadUrl(ver, candidate);
+    if (window.AndroidBridge && typeof AndroidBridge.openExternalUrl === 'function') {
+        if (AndroidBridge.openExternalUrl(resolved)) return true;
+    }
+    if (typeof window !== 'undefined' && window.location) {
+        window.location.href = resolved;
+    }
+    return true;
+}
+
+function reloadSavedWebUpdate() {
+    if (window.AndroidBridge && typeof AndroidBridge.reloadApp === 'function') {
+        AndroidBridge.reloadApp();
+        return true;
+    }
+    if (typeof window !== 'undefined' && window.location && typeof window.location.reload === 'function') {
+        window.location.reload();
+        return true;
+    }
+    return false;
 }
 
 window.__onApkUpdateEvent = function(rawJson) {
@@ -5024,6 +5057,8 @@ window.__onApkUpdateEvent = function(rawJson) {
     const updateBtn = document.getElementById('updateBtn');
     const apkBtn = document.getElementById('apkUpdateBtn');
     const cancelBtn = document.getElementById('cancelApkUpdateBtn');
+    const browserBtn = document.getElementById('apkBrowserFallbackBtn');
+    const reloadBtn = document.getElementById('reloadWebUpdateBtn');
 
     if (evt.state === 'downloading') {
         activeApkDownloadState = evt;
@@ -5035,6 +5070,8 @@ window.__onApkUpdateEvent = function(rawJson) {
         if (updateBtn) { updateBtn.disabled = true; updateBtn.textContent = 'Downloading Update...'; }
         if (apkBtn) apkBtn.disabled = true;
         if (cancelBtn) cancelBtn.style.display = 'block';
+        if (browserBtn) browserBtn.style.display = 'none';
+        if (reloadBtn) reloadBtn.style.display = 'none';
         return;
     }
 
@@ -5055,16 +5092,39 @@ window.__onApkUpdateEvent = function(rawJson) {
     }
 
     if (evt.state === 'installing') {
+        pendingWebReloadVersion = '';
         if (statusText) statusText.textContent = 'Opening Android installer for v' + (evt.version || '') + ' — tap Install to finish.';
         if (updateBtn) { updateBtn.disabled = false; updateBtn.textContent = 'Check & Install Updates'; }
         if (apkBtn) { apkBtn.disabled = false; apkBtn.textContent = 'Install Ready Update (v' + (evt.version || LATEST_APK_VERSION) + ')'; }
+        if (browserBtn) browserBtn.style.display = 'none';
+        if (reloadBtn) reloadBtn.style.display = 'none';
         return;
     }
 
     if (evt.state === 'cancelled' || evt.state === 'error') {
-        if (statusText) statusText.textContent = evt.message || 'Full app update failed. Please try again.';
+        const errMsg = evt.message || 'Full app update failed. Please try again.';
+        const httpMatch = errMsg.match(/HTTP\s*(401|403|404)\b/i);
+        const httpCode = Number(evt.code || (httpMatch ? httpMatch[1] : 0));
+        const isAuthHttpError = httpCode === 401 || httpCode === 403 || httpCode === 404;
+        const targetVer = evt.version || (pendingApkDownload && pendingApkDownload.version) || LATEST_APK_VERSION;
+        if (statusText) {
+            if (isAuthHttpError && evt.state === 'error') {
+                statusText.textContent = 'Direct APK download failed (HTTP ' + httpCode + ' — private GitHub release). Tap Open Download in Browser below (signed into GitHub) to install v' + targetVer + '.'
+                    + (pendingWebReloadVersion ? ' Web UI v' + pendingWebReloadVersion + ' is ready — tap Apply Saved Web UI.' : '');
+            } else {
+                statusText.textContent = errMsg;
+            }
+        }
         if (updateBtn) { updateBtn.disabled = false; updateBtn.textContent = 'Check & Install Updates'; }
         if (apkBtn) apkBtn.disabled = false;
+        if (browserBtn && evt.state === 'error') {
+            browserBtn.style.display = 'block';
+            browserBtn.textContent = 'Open Download in Browser (v' + targetVer + ')';
+        }
+        if (reloadBtn && pendingWebReloadVersion) {
+            reloadBtn.style.display = 'block';
+            reloadBtn.textContent = 'Apply Saved Web UI (v' + pendingWebReloadVersion + ')';
+        }
     }
 };
 
@@ -5074,6 +5134,7 @@ function startNativeApkUpdate(apkVersion, apkUrl) {
     const apkBtn = document.getElementById('apkUpdateBtn');
     const targetUrl = resolveApkDownloadUrl(apkVersion, apkUrl);
     const targetVersion = apkVersion || LATEST_APK_VERSION;
+    pendingApkDownload = { version: targetVersion, url: targetUrl };
 
     if (window.AndroidBridge && typeof AndroidBridge.installApkUpdateAsync === 'function') {
         if (statusText) statusText.textContent = 'Preparing full update v' + targetVersion + '...';
@@ -5175,7 +5236,9 @@ function applyUpdate(newHtml) {
 
     if (needsApk && supportsInAppApk) {
         if (needsWeb && AndroidBridge.saveLiveHtml) {
-            AndroidBridge.saveLiveHtml(newHtml);
+            if (AndroidBridge.saveLiveHtml(newHtml)) {
+                pendingWebReloadVersion = remoteWeb;
+            }
         }
         startNativeApkUpdate(remoteApk, remoteApkUrl);
         return;

@@ -314,12 +314,16 @@ function runExtendedActionTests() {
     const updateBtnEl = { disabled: false, textContent: 'Check & Install Updates' };
     const apkUpdateBtnEl = { disabled: false, textContent: 'Download APK Update' };
     const cancelApkBtnEl = { style: { display: 'none' } };
+    const browserFallbackBtnEl = { style: { display: 'none' }, textContent: '' };
+    const reloadWebBtnEl = { style: { display: 'none' }, textContent: '' };
     const originalGetById = extCtx.document.getElementById;
     extCtx.document.getElementById = id => {
         if (id === 'updateStatusText') return updateStatusEl;
         if (id === 'updateBtn') return updateBtnEl;
         if (id === 'apkUpdateBtn') return apkUpdateBtnEl;
         if (id === 'cancelApkUpdateBtn') return cancelApkBtnEl;
+        if (id === 'apkBrowserFallbackBtn') return browserFallbackBtnEl;
+        if (id === 'reloadWebUpdateBtn') return reloadWebBtnEl;
         return originalGetById(id);
     };
 
@@ -402,6 +406,30 @@ function runExtendedActionTests() {
     extCtx.applyUpdate(webOnlyHtml);
     assert.equal(apkInstalls.length, 0, 'web-only update skips APK download');
     assert.equal(savedHtmls.length, 2);
+
+    // Private-repo HTTP 404 during APK update after saving Web UI exposes browser fallback + Web UI reload buttons
+    extCtx.applyUpdate(fullRemoteHtml);
+    extCtx.__onApkUpdateEvent(JSON.stringify({
+        state: 'error',
+        version: '9.9.9',
+        code: 404,
+        message: 'HTTP 404 downloading APK'
+    }));
+    assert.match(updateStatusEl.textContent, /HTTP 404.*private GitHub release/i);
+    assert.match(updateStatusEl.textContent, /Web UI v9\.9\.9 is ready/i);
+    assert.equal(browserFallbackBtnEl.style.display, 'block');
+    assert.equal(browserFallbackBtnEl.textContent, 'Open Download in Browser (v9.9.9)');
+    assert.equal(reloadWebBtnEl.style.display, 'block');
+    assert.equal(reloadWebBtnEl.textContent, 'Apply Saved Web UI (v9.9.9)');
+
+    openedUrls.length = 0;
+    extCtx.openApkDownloadInBrowser();
+    assert.equal(openedUrls.length, 1);
+    assert.equal(openedUrls[0], 'https://github.com/sovopr/xlite-android/releases/download/v9.9.9/xlite-fup-release.apk');
+
+    const prevReloads = reloadCount;
+    extCtx.reloadSavedWebUpdate();
+    assert.equal(reloadCount, prevReloads + 1);
 
     // Settings renders Profile Pictures, Hide Ads & Seen Sync preferences and saveSettings persists them
     store.cache_pref_avatar_mode = 'normal';

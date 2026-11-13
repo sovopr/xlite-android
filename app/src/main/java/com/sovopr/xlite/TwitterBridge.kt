@@ -65,7 +65,7 @@ class TwitterBridge(private val context: Context) {
         private val ALLOWED_FORM_POST_PATH_REGEX = Regex("^/i/api/1\\.1/(?:jot/client_event|friendships/(?:create|destroy))\\.json$")
         private val ALLOWED_SIGNED_GET_PATH_REGEX = Regex("^/i/api/(?:graphql/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+|2/notifications/[A-Za-z0-9_.-]+\\.json)$")
         private val TRANSACTION_ID_REGEX = Regex("^[A-Za-z0-9+/]{80,120}$")
-        private val ALLOWED_APK_PATH_REGEX = Regex("^/sovopr/xlite-android/releases/(?:latest/download|download/v[0-9]+\\.[0-9]+\\.[0-9]+)/xlite-fup-release\\.apk$")
+        private val ALLOWED_APK_PATH_REGEX = Regex("^/sovopr/xlite-(?:android|releases)/releases/(?:latest/download|download/v[0-9]+\\.[0-9]+\\.[0-9]+)/xlite-fup-release\\.apk$")
         private val SEMVER_REGEX = Regex("^[0-9]+\\.[0-9]+\\.[0-9]+$")
         private const val MIN_APK_BYTES = 1_000_000L
         private const val MAX_APK_BYTES = 64L * 1024L * 1024L
@@ -460,7 +460,7 @@ class TwitterBridge(private val context: Context) {
     fun openExternalUrl(url: String): Boolean {
         val parsed = url.toHttpUrlOrNull() ?: return false
         if (!parsed.isHttps) return false
-        val allowed = (parsed.host == "github.com" && parsed.encodedPath.startsWith("/sovopr/xlite-android")) ||
+        val allowed = (parsed.host == "github.com" && (parsed.encodedPath.startsWith("/sovopr/xlite-android") || parsed.encodedPath.startsWith("/sovopr/xlite-releases"))) ||
             parsed.host == "x.com"
         if (!allowed) return false
         return try {
@@ -488,9 +488,10 @@ class TwitterBridge(private val context: Context) {
 
         apkExecutor.execute {
             var tmpFile: File? = null
+            var lastHttpStatus = 0
+            val fileVersion = cleanVersion.ifEmpty { "latest" }
             try {
                 val updatesDir = File(context.cacheDir, "updates").apply { if (!exists()) mkdirs() }
-                val fileVersion = cleanVersion.ifEmpty { "latest" }
                 val targetFile = File(updatesDir, "xlite-update-$fileVersion.apk")
 
                 if (verifyDownloadedApk(targetFile, cleanVersion)) {
@@ -522,6 +523,7 @@ class TwitterBridge(private val context: Context) {
 
                 call.execute().use { response ->
                     if (!response.isSuccessful) {
+                        lastHttpStatus = response.code
                         throw IOException("HTTP ${response.code} downloading APK")
                     }
                     val body = response.body ?: throw IOException("Empty APK response")
@@ -583,12 +585,17 @@ class TwitterBridge(private val context: Context) {
                 proceedToInstall(targetFile, fileVersion)
             } catch (e: IOException) {
                 if (activeApkCall?.isCanceled() == true) {
-                    emitApkEvent(JSONObject().put("state", "cancelled").put("message", "Update download cancelled."))
+                    emitApkEvent(JSONObject().put("state", "cancelled").put("version", fileVersion).put("message", "Update download cancelled."))
                 } else {
-                    emitApkEvent(JSONObject().put("state", "error").put("message", e.message ?: "APK download failed"))
+                    val errJson = JSONObject()
+                        .put("state", "error")
+                        .put("version", fileVersion)
+                        .put("message", e.message ?: "APK download failed")
+                    if (lastHttpStatus > 0) errJson.put("code", lastHttpStatus)
+                    emitApkEvent(errJson)
                 }
             } catch (e: Exception) {
-                emitApkEvent(JSONObject().put("state", "error").put("message", e.message ?: "APK update failed"))
+                emitApkEvent(JSONObject().put("state", "error").put("version", fileVersion).put("message", e.message ?: "APK update failed"))
             } finally {
                 tmpFile?.takeIf { it.exists() }?.delete()
                 activeApkCall = null
