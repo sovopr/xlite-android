@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-labelledby="title desc">
+  <title id="title">X Lite</title>
+  <desc id="desc">A slim white X mark with a signature blue signal dot on an OLED black rounded square</desc>
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="14" fill="#000000" stroke="#2f3336" stroke-width="1.5" />
+  <path d="M14 13h9l30 39h-9z" fill="#f7f9fa" />
+  <path d="M18.5 15.5H21l27.5 34H46z" fill="#000000" />
+  <path d="M47 13h5L19 52h-5z" fill="#f7f9fa" />
+  <circle cx="51" cy="20" r="7" fill="#1d9bf0" opacity="0.14" />
+  <circle cx="51" cy="20" r="5" fill="#1d9bf0" opacity="0.24" />
+  <circle cx="51" cy="20" r="3.5" fill="#1d9bf0" />
+</svg>

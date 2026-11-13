@@ -61,12 +61,6 @@ class TwitterBridge(private val context: Context) {
     companion object {
         const val BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
         const val USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
-        private val ALLOWED_POST_PATH_REGEX = Regex("^/i/api/graphql/[A-Za-z0-9_-]+/(CreateTweet|FavoriteTweet|UnfavoriteTweet|CreateRetweet|DeleteRetweet|CreateBookmark|DeleteBookmark|HomeTimeline|HomeLatestTimeline)$")
-        private val ALLOWED_FORM_POST_PATH_REGEX = Regex("^/i/api/1\\.1/(?:jot/client_event|friendships/(?:create|destroy))\\.json$")
-        private val ALLOWED_SIGNED_GET_PATH_REGEX = Regex("^/i/api/(?:graphql/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+|2/notifications/[A-Za-z0-9_.-]+\\.json)$")
-        private val TRANSACTION_ID_REGEX = Regex("^[A-Za-z0-9+/]{80,120}$")
-        private val ALLOWED_APK_PATH_REGEX = Regex("^/sovopr/xlite-(?:android|releases)/releases/(?:latest/download|download/v[0-9]+\\.[0-9]+\\.[0-9]+)/xlite-fup-release\\.apk$")
-        private val SEMVER_REGEX = Regex("^[0-9]+\\.[0-9]+\\.[0-9]+$")
         private const val MIN_APK_BYTES = 1_000_000L
         private const val MAX_APK_BYTES = 64L * 1024L * 1024L
 
@@ -250,17 +244,12 @@ class TwitterBridge(private val context: Context) {
     @JavascriptInterface
     fun executeSignedGetAsync(url: String, transactionId: String, callbackId: String) {
         val parsed = url.toHttpUrlOrNull()
-        val validUrl = parsed?.isHttps == true && parsed.host == "x.com" &&
-            ALLOWED_SIGNED_GET_PATH_REGEX.matches(parsed.encodedPath)
-        if (!validUrl || !TRANSACTION_ID_REGEX.matches(transactionId)) {
+        val validUrl = parsed != null && XLitePolicy.isAllowedSignedGetUrl(url)
+        if (!validUrl || !XLitePolicy.isValidTransactionId(transactionId)) {
             finishAsyncRequest(callbackId, errorPayload("Invalid signed request"))
             return
         }
-        val referer = when {
-            parsed!!.encodedPath.startsWith("/i/api/2/notifications/") -> "https://x.com/notifications"
-            parsed.encodedPath.contains("/SearchTimeline") -> "https://x.com/search"
-            else -> "https://x.com/home"
-        }
+        val referer = XLitePolicy.resolveSignedReferer(parsed!!.encodedPath)
         requestExecutor.execute {
             try {
                 val request = buildRequest(url).newBuilder()
@@ -282,10 +271,7 @@ class TwitterBridge(private val context: Context) {
 
     @JavascriptInterface
     fun executeFormPostWithTransactionAsync(url: String, formBody: String, transactionId: String, callbackId: String) {
-        val parsedUrl = url.toHttpUrlOrNull()
-        val validUrl = parsedUrl?.isHttps == true && parsedUrl.host == "x.com" &&
-            ALLOWED_FORM_POST_PATH_REGEX.matches(parsedUrl.encodedPath)
-        if (!validUrl || !TRANSACTION_ID_REGEX.matches(transactionId)) {
+        if (url.toHttpUrlOrNull() == null || !XLitePolicy.isAllowedFormPostUrl(url) || !XLitePolicy.isValidTransactionId(transactionId)) {
             finishAsyncRequest(callbackId, errorPayload("Unsupported form post URL"))
             return
         }
@@ -339,10 +325,7 @@ class TwitterBridge(private val context: Context) {
     }
 
     private fun buildPostRequest(url: String, jsonPayload: String, transactionId: String? = null): Request? {
-        val parsedUrl = url.toHttpUrlOrNull()
-        if (parsedUrl?.isHttps != true || parsedUrl.host != "x.com" ||
-            !ALLOWED_POST_PATH_REGEX.matches(parsedUrl.encodedPath)
-        ) {
+        if (url.toHttpUrlOrNull() == null || !XLitePolicy.isAllowedPostUrl(url)) {
             return null
         }
         val authToken = prefs.getString("auth_token", "") ?: ""
@@ -365,7 +348,7 @@ class TwitterBridge(private val context: Context) {
             .addHeader("x-twitter-auth-type", "OAuth2Session")
             .addHeader("referer", "https://x.com/home")
         if (!transactionId.isNullOrBlank()) {
-            if (!TRANSACTION_ID_REGEX.matches(transactionId)) return null
+            if (!XLitePolicy.isValidTransactionId(transactionId)) return null
             builder.addHeader("x-client-transaction-id", transactionId)
         }
         return builder.build()
@@ -373,7 +356,7 @@ class TwitterBridge(private val context: Context) {
 
     @JavascriptInterface
     fun executePostWithTransactionAsync(url: String, jsonPayload: String, transactionId: String, callbackId: String) {
-        if (!TRANSACTION_ID_REGEX.matches(transactionId)) {
+        if (!XLitePolicy.isValidTransactionId(transactionId)) {
             finishAsyncRequest(callbackId, errorPayload("Invalid request signature"))
             return
         }
@@ -458,11 +441,7 @@ class TwitterBridge(private val context: Context) {
 
     @JavascriptInterface
     fun openExternalUrl(url: String): Boolean {
-        val parsed = url.toHttpUrlOrNull() ?: return false
-        if (!parsed.isHttps) return false
-        val allowed = (parsed.host == "github.com" && (parsed.encodedPath.startsWith("/sovopr/xlite-android") || parsed.encodedPath.startsWith("/sovopr/xlite-releases"))) ||
-            parsed.host == "x.com"
-        if (!allowed) return false
+        if (url.toHttpUrlOrNull() == null || !XLitePolicy.isAllowedExternalUrl(url)) return false
         return try {
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -475,15 +454,17 @@ class TwitterBridge(private val context: Context) {
     }
 
     @JavascriptInterface
-    fun installApkUpdateAsync(url: String, expectedVersion: String): Boolean {
-        val parsed = url.toHttpUrlOrNull()
-        if (parsed?.isHttps != true || parsed.host != "github.com" ||
-            !ALLOWED_APK_PATH_REGEX.matches(parsed.encodedPath)
-        ) {
+    fun installApkUpdateAsync(url: String, expectedVersion: String): Boolean =
+        installApkUpdateVerifiedAsync(url, expectedVersion, "")
+
+    @JavascriptInterface
+    fun installApkUpdateVerifiedAsync(url: String, expectedVersion: String, expectedSha256: String): Boolean {
+        if (url.toHttpUrlOrNull() == null || !XLitePolicy.isAllowedApkUrl(url)) {
             emitApkEvent(JSONObject().put("state", "error").put("message", "Unsupported APK update URL"))
             return false
         }
-        val cleanVersion = expectedVersion.trim().takeIf { SEMVER_REGEX.matches(it) } ?: ""
+        val cleanVersion = expectedVersion.trim().takeIf { XLitePolicy.isValidSemver(it) } ?: ""
+        val cleanDigest = expectedSha256.trim().lowercase().takeIf { Regex("^[0-9a-f]{64}$").matches(it) } ?: ""
         if (!apkDownloadInFlight.compareAndSet(false, true)) return false
 
         apkExecutor.execute {
@@ -494,7 +475,9 @@ class TwitterBridge(private val context: Context) {
                 val updatesDir = File(context.cacheDir, "updates").apply { if (!exists()) mkdirs() }
                 val targetFile = File(updatesDir, "xlite-update-$fileVersion.apk")
 
-                if (verifyDownloadedApk(targetFile, cleanVersion)) {
+                val resolvedExpectedDigest = cleanDigest.ifEmpty { fetchExpectedApkSha256(url) ?: "" }
+
+                if (verifyDownloadedApk(targetFile, cleanVersion, resolvedExpectedDigest)) {
                     proceedToInstall(targetFile, fileVersion)
                     return@execute
                 }
@@ -577,9 +560,15 @@ class TwitterBridge(private val context: Context) {
                 if (!downloadTmp.renameTo(targetFile)) {
                     throw IOException("Could not finalize downloaded APK")
                 }
-                if (!verifyDownloadedApk(targetFile, cleanVersion)) {
+                if (!verifyDownloadedApk(targetFile, cleanVersion, resolvedExpectedDigest)) {
                     targetFile.delete()
-                    throw IOException("Downloaded APK failed package verification")
+                    throw IOException(
+                        if (resolvedExpectedDigest.isNotEmpty()) {
+                            "Downloaded APK failed SHA-256 or package verification"
+                        } else {
+                            "Downloaded APK failed package verification"
+                        }
+                    )
                 }
 
                 proceedToInstall(targetFile, fileVersion)
@@ -697,7 +686,46 @@ class TwitterBridge(private val context: Context) {
         }
     }
 
-    private fun verifyDownloadedApk(file: File, expectedVersion: String): Boolean {
+    private fun fetchExpectedApkSha256(apkUrl: String): String? {
+        val sumsUrl = XLitePolicy.resolveChecksumsUrl(apkUrl) ?: return null
+        return try {
+            val shortClient = apkClient.newBuilder()
+                .connectTimeout(6, TimeUnit.SECONDS)
+                .readTimeout(6, TimeUnit.SECONDS)
+                .callTimeout(10, TimeUnit.SECONDS)
+                .build()
+            val req = Request.Builder()
+                .url(sumsUrl)
+                .addHeader("Accept", "text/plain")
+                .addHeader("User-Agent", "XLite-Updater")
+                .build()
+            shortClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                XLitePolicy.parseSha256Sums(resp.body?.string() ?: "")
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun computeFileSha256(file: File): String? {
+        return try {
+            val md = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(16 * 1024)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    md.update(buffer, 0, read)
+                }
+            }
+            md.digest().joinToString("") { "%02x".format(it) }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun verifyDownloadedApk(file: File, expectedVersion: String, expectedSha256: String = ""): Boolean {
         if (!file.exists() || file.length() < MIN_APK_BYTES) return false
         val header = ByteArray(4)
         try {
@@ -711,13 +739,21 @@ class TwitterBridge(private val context: Context) {
             header[2] == 0x03.toByte() && header[3] == 0x04.toByte()
         if (!isZipHeader) return false
 
+        if (expectedSha256.isNotBlank()) {
+            val actualSha = computeFileSha256(file) ?: return false
+            if (!actualSha.equals(expectedSha256, ignoreCase = true)) return false
+        }
+
         val archiveInfo = readApkPackageInfo(file.absolutePath) ?: return false
         if (archiveInfo.packageName != context.packageName) return false
-        if (expectedVersion.isNotBlank() && SEMVER_REGEX.matches(expectedVersion) && archiveInfo.versionName != expectedVersion) {
-            return false
-        }
-        val installedInfo = getInstalledPackageInfo() ?: return true
-        return PackageInfoCompat.getLongVersionCode(archiveInfo) >= PackageInfoCompat.getLongVersionCode(installedInfo)
+        val installedInfo = getInstalledPackageInfo()
+        val installedCode = installedInfo?.let { PackageInfoCompat.getLongVersionCode(it) } ?: 0L
+        return XLitePolicy.isApkVersionCompatible(
+            candidateVersionCode = PackageInfoCompat.getLongVersionCode(archiveInfo),
+            installedVersionCode = installedCode,
+            expectedVersion = expectedVersion,
+            candidateVersionName = archiveInfo.versionName
+        )
     }
 
     private fun cleanupOldApks(updatesDir: File, keepName: String) {
@@ -771,21 +807,13 @@ class TwitterBridge(private val context: Context) {
         return JSONObject()
             .put("version", info?.versionName ?: "unknown")
             .put("build", info?.let { PackageInfoCompat.getLongVersionCode(it) } ?: 0L)
+            .put("sha", BuildConfig.GIT_SHA)
             .put("isLive", isLive)
             .toString()
     }
 
     private fun errorPayload(message: String) = JSONObject().put("error", true).put("message", message).toString()
 
-    private fun isAllowedGetUrl(url: String): Boolean {
-        val parsed = url.toHttpUrlOrNull() ?: return false
-        if (!parsed.isHttps) return false
-        return when (parsed.host) {
-            "x.com" -> parsed.encodedPath == "/home" || parsed.encodedPath.startsWith("/i/api/")
-            "api.twitter.com" -> parsed.encodedPath.startsWith("/i/api/") || parsed.encodedPath.startsWith("/1.1/search/")
-            "abs.twimg.com" -> Regex("^/responsive-web/client-web/ondemand\\.s\\.[0-9a-f]+a\\.js$").matches(parsed.encodedPath)
-            "gist.githubusercontent.com" -> parsed.encodedPath.startsWith("/sovopr/c52e8a1490b3a5415525b27063726bbe/")
-            else -> false
-        }
-    }
+    private fun isAllowedGetUrl(url: String): Boolean =
+        url.toHttpUrlOrNull() != null && XLitePolicy.isAllowedGetUrl(url)
 }

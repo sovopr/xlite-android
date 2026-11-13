@@ -20,7 +20,6 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
-import java.security.MessageDigest
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -136,21 +135,13 @@ class MainActivity : AppCompatActivity() {
             val bundled = assets.open("index.html").bufferedReader().use { it.readText() }
             val installed = readPageVersion(bundled)
             val live = readPageVersion(liveIndex.readText())
-            live != null && installed != null && compareVersions(live, installed) > 0
+            live != null && installed != null && XLitePolicy.compareSemver(live, installed) > 0
         } catch (_: Exception) { false }
     }
 
-    private fun readPageVersion(html: String): List<Int>? =
-        Regex("const APP_VERSION = '([0-9]+)\\.([0-9]+)\\.([0-9]+)'")
-            .find(html)?.groupValues?.drop(1)?.map { it.toInt() }
-
-    private fun compareVersions(a: List<Int>, b: List<Int>): Int {
-        for (index in 0..2) {
-            val comparison = a[index].compareTo(b[index])
-            if (comparison != 0) return comparison
-        }
-        return 0
-    }
+    private fun readPageVersion(html: String): String? =
+        Regex("const APP_VERSION = '([0-9]+\\.[0-9]+\\.[0-9]+)'")
+            .find(html)?.groupValues?.getOrNull(1)
 
     override fun onResume() {
         super.onResume()
@@ -205,96 +196,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun buildImageCandidateUrls(imageUrl: Uri, mode: String, imageFormat: String): List<String> {
-        val rawPath = imageUrl.path ?: ""
-        val cleanPath = rawPath.replace(Regex(":(thumb|small|medium|large|orig)$"), "")
-        val baseFormat = if (imageFormat == "jpeg") "jpg" else imageFormat
+    private fun buildImageCandidateUrls(imageUrl: Uri, mode: String, imageFormat: String): List<String> =
+        XLitePolicy.buildImageCandidateUrls(imageUrl.toString(), mode, imageFormat)
 
-        if (cleanPath.startsWith("/media/")) {
-            val baseBuilder = { imageUrl.buildUpon().path(cleanPath).clearQuery() }
-            return when (mode) {
-                "hd" -> listOf(
-                    baseBuilder().appendQueryParameter("format", "webp").appendQueryParameter("name", "large").build().toString(),
-                    baseBuilder().appendQueryParameter("format", "webp").appendQueryParameter("name", "medium").build().toString(),
-                    baseBuilder().appendQueryParameter("format", baseFormat).appendQueryParameter("name", "medium").build().toString(),
-                    baseBuilder().appendQueryParameter("format", "webp").appendQueryParameter("name", "small").build().toString(),
-                    baseBuilder().appendQueryParameter("format", baseFormat).appendQueryParameter("name", "small").build().toString()
-                ).distinct()
-                "rich" -> listOf(
-                    baseBuilder().appendQueryParameter("format", "webp").appendQueryParameter("name", "small").build().toString(),
-                    baseBuilder().appendQueryParameter("format", baseFormat).appendQueryParameter("name", "small").build().toString(),
-                    baseBuilder().appendQueryParameter("format", "webp").appendQueryParameter("name", "medium").build().toString(),
-                    baseBuilder().appendQueryParameter("format", baseFormat).appendQueryParameter("name", "medium").build().toString()
-                ).distinct()
-                else -> listOf(
-                    baseBuilder().appendQueryParameter("format", "webp").appendQueryParameter("name", "thumb").build().toString(),
-                    baseBuilder().appendQueryParameter("format", baseFormat).appendQueryParameter("name", "thumb").build().toString()
-                ).distinct()
-            }
-        }
-
-        if (cleanPath.startsWith("/profile_banners/")) {
-            val pathUrl = { p: String -> imageUrl.buildUpon().path(p).clearQuery().build().toString() }
-            return if (Regex("/\\d+x\\d+$").containsMatchIn(cleanPath)) {
-                listOf(imageUrl.toString())
-            } else {
-                listOf(pathUrl("$cleanPath/600x200"), pathUrl(cleanPath)).distinct()
-            }
-        }
-
-        val isVideoThumb = cleanPath.startsWith("/amplify_video_thumb/") ||
-            cleanPath.startsWith("/ext_tw_video_thumb/") ||
-            cleanPath.startsWith("/tweet_video_thumb/")
-        if (isVideoThumb) {
-            val pathUrl = { p: String -> imageUrl.buildUpon().path(p).clearQuery().build().toString() }
-            return when (mode) {
-                "hd" -> listOf(
-                    pathUrl("$cleanPath:large"),
-                    pathUrl("$cleanPath:medium"),
-                    pathUrl("$cleanPath:small"),
-                    pathUrl(cleanPath)
-                ).distinct()
-                "rich" -> listOf(
-                    pathUrl("$cleanPath:medium"),
-                    pathUrl("$cleanPath:small"),
-                    pathUrl(cleanPath)
-                ).distinct()
-                else -> listOf(
-                    pathUrl("$cleanPath:thumb"),
-                    pathUrl(cleanPath)
-                ).distinct()
-            }
-        }
-
-        return listOf(imageUrl.toString())
-    }
-
-    private fun detectImageMime(bytes: ByteArray, fallbackFormat: String = "webp"): String {
-        if (bytes.size >= 12 &&
-            bytes[0] == 'R'.code.toByte() && bytes[1] == 'I'.code.toByte() &&
-            bytes[2] == 'F'.code.toByte() && bytes[3] == 'F'.code.toByte() &&
-            bytes[8] == 'W'.code.toByte() && bytes[9] == 'E'.code.toByte() &&
-            bytes[10] == 'B'.code.toByte() && bytes[11] == 'P'.code.toByte()
-        ) {
-            return "image/webp"
-        }
-        if (bytes.size >= 4 &&
-            bytes[0] == 0x89.toByte() && bytes[1] == 'P'.code.toByte() &&
-            bytes[2] == 'N'.code.toByte() && bytes[3] == 'G'.code.toByte()
-        ) {
-            return "image/png"
-        }
-        if (bytes.size >= 3 &&
-            bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte()
-        ) {
-            return "image/jpeg"
-        }
-        return when (fallbackFormat) {
-            "png" -> "image/png"
-            "jpg", "jpeg" -> "image/jpeg"
-            else -> "image/webp"
-        }
-    }
+    private fun detectImageMime(bytes: ByteArray, fallbackFormat: String = "webp"): String =
+        XLitePolicy.detectImageMime(bytes, fallbackFormat)
 
     private fun detectImageMimeFromFile(file: File): String {
         val header = ByteArray(12)
@@ -428,8 +334,5 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun sha256(input: String): String {
-        val md = MessageDigest.getInstance("SHA-256")
-        return md.digest(input.toByteArray()).joinToString("") { "%02x".format(it) }
-    }
+    private fun sha256(input: String): String = XLitePolicy.sha256Hex(input.toByteArray())
 }

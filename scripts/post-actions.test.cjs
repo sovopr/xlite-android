@@ -431,6 +431,30 @@ function runExtendedActionTests() {
     extCtx.reloadSavedWebUpdate();
     assert.equal(reloadCount, prevReloads + 1);
 
+    // Verified APK updater uses installApkUpdateVerifiedAsync with parsed LATEST_APK_SHA256 when exposed by bridge
+    const verifiedCalls = [];
+    const expectedSha = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+    extCtx.AndroidBridge.installApkUpdateVerifiedAsync = (url, ver, sha) => {
+        verifiedCalls.push({ url, ver, sha });
+        return true;
+    };
+    const verifiedRemoteHtml = [
+        '<!DOCTYPE html><html><body><div id="mainContent"></div><script>',
+        "const APP_VERSION = '9.9.9';",
+        "const LATEST_APK_VERSION = '9.9.9';",
+        "const LATEST_APK_URL = 'https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk';",
+        `const LATEST_APK_SHA256 = '${expectedSha}';`,
+        '</script></body></html>'
+    ].join('\n');
+    apkInstalls.length = 0;
+    extCtx.applyUpdate(verifiedRemoteHtml);
+    assert.equal(verifiedCalls.length, 1);
+    assert.equal(verifiedCalls[0].url, 'https://github.com/sovopr/xlite-android/releases/download/v9.9.9/xlite-fup-release.apk');
+    assert.equal(verifiedCalls[0].ver, '9.9.9');
+    assert.equal(verifiedCalls[0].sha, expectedSha);
+    assert.equal(apkInstalls.length, 0, 'does not call legacy installer when verified installer handles update');
+    delete extCtx.AndroidBridge.installApkUpdateVerifiedAsync;
+
     // Settings renders Profile Pictures, Hide Ads & Seen Sync preferences and saveSettings persists them
     store.cache_pref_avatar_mode = 'normal';
     store.cache_pref_hide_ads = 'false';

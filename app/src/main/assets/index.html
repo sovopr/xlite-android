@@ -1612,10 +1612,11 @@ let isFetching = false;
 let pendingCallbacks = {};
 const pendingActionLocks = {};
 const activeImageLoads = new Set();
-const APP_VERSION = '1.0.23';
-const APP_BUILD = '2026.11.13.8';
-const LATEST_APK_VERSION = '1.0.23';
+const APP_VERSION = '1.0.24';
+const APP_BUILD = '2026.11.13.9';
+const LATEST_APK_VERSION = '1.0.24';
 const LATEST_APK_URL = 'https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk';
+const LATEST_APK_SHA256 = '';
 let activeApkDownloadState = null;
 let pendingWebReloadVersion = '';
 let pendingApkDownload = null;
@@ -4825,6 +4826,7 @@ function renderSettings() {
     }
 
     let installedVersion = versionInfo.version || 'unknown';
+    let installedSha = versionInfo.sha && versionInfo.sha !== 'local' ? ' · ' + versionInfo.sha : '';
     let hasNewApk = installedVersion !== 'unknown' && compareSemver(LATEST_APK_VERSION, installedVersion) > 0;
     let isApkDownloading = !!apkStatus.downloading || !!(activeApkDownloadState && activeApkDownloadState.state === 'downloading');
     let cachedReady = !!(hasNewApk && apkStatus.cachedVersion === LATEST_APK_VERSION);
@@ -4842,7 +4844,7 @@ function renderSettings() {
             </div>
             <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding:6px 0;">
                 <span style="color:var(--text-muted);">Installed APK</span>
-                <span style="color:var(--text);">v${escapeHtml(installedVersion)} (${escapeHtml(versionInfo.build || '?')})</span>
+                <span style="color:var(--text);">v${escapeHtml(installedVersion)} (${escapeHtml(versionInfo.build || '?')}${escapeHtml(installedSha)})</span>
             </div>
             <div style="display:flex; justify-content:space-between; padding:6px 0;">
                 <span style="color:var(--text-muted);">Runtime Source</span>
@@ -5128,19 +5130,22 @@ window.__onApkUpdateEvent = function(rawJson) {
     }
 };
 
-function startNativeApkUpdate(apkVersion, apkUrl) {
+function startNativeApkUpdate(apkVersion, apkUrl, apkSha256 = LATEST_APK_SHA256) {
     const statusText = document.getElementById('updateStatusText');
     const updateBtn = document.getElementById('updateBtn');
     const apkBtn = document.getElementById('apkUpdateBtn');
     const targetUrl = resolveApkDownloadUrl(apkVersion, apkUrl);
     const targetVersion = apkVersion || LATEST_APK_VERSION;
-    pendingApkDownload = { version: targetVersion, url: targetUrl };
+    const expectedSha = typeof apkSha256 === 'string' && /^[0-9a-fA-F]{64}$/.test(apkSha256.trim()) ? apkSha256.trim().toLowerCase() : '';
+    pendingApkDownload = { version: targetVersion, url: targetUrl, sha256: expectedSha };
 
-    if (window.AndroidBridge && typeof AndroidBridge.installApkUpdateAsync === 'function') {
+    if (window.AndroidBridge && (typeof AndroidBridge.installApkUpdateVerifiedAsync === 'function' || typeof AndroidBridge.installApkUpdateAsync === 'function')) {
         if (statusText) statusText.textContent = 'Preparing full update v' + targetVersion + '...';
         if (updateBtn) { updateBtn.disabled = true; updateBtn.textContent = 'Downloading Update...'; }
         if (apkBtn) apkBtn.disabled = true;
-        const started = AndroidBridge.installApkUpdateAsync(targetUrl, targetVersion);
+        const started = typeof AndroidBridge.installApkUpdateVerifiedAsync === 'function'
+            ? AndroidBridge.installApkUpdateVerifiedAsync(targetUrl, targetVersion, expectedSha)
+            : AndroidBridge.installApkUpdateAsync(targetUrl, targetVersion);
         if (!started) {
             if (statusText) statusText.textContent = 'Update download is already in progress or blocked.';
             if (updateBtn) { updateBtn.disabled = false; updateBtn.textContent = 'Check & Install Updates'; }
@@ -5222,6 +5227,8 @@ function applyUpdate(newHtml) {
     const remoteApk = apkMatch ? apkMatch[1] : remoteWeb;
     const urlMatch = newHtml.match(/const LATEST_APK_URL = '(https:\/\/[^']+)'/);
     const remoteApkUrl = resolveApkDownloadUrl(remoteApk, urlMatch ? urlMatch[1] : '');
+    const shaMatch = newHtml.match(/const LATEST_APK_SHA256 = '([0-9a-fA-F]{64})'/);
+    const remoteApkSha256 = shaMatch ? shaMatch[1].toLowerCase() : '';
 
     let installedApk = 'unknown';
     try {
@@ -5232,7 +5239,7 @@ function applyUpdate(newHtml) {
 
     const needsApk = installedApk !== 'unknown' && compareSemver(remoteApk, installedApk) > 0;
     const needsWeb = compareSemver(remoteWeb, APP_VERSION) > 0;
-    const supportsInAppApk = !!(window.AndroidBridge && typeof AndroidBridge.installApkUpdateAsync === 'function');
+    const supportsInAppApk = !!(window.AndroidBridge && (typeof AndroidBridge.installApkUpdateVerifiedAsync === 'function' || typeof AndroidBridge.installApkUpdateAsync === 'function'));
 
     if (needsApk && supportsInAppApk) {
         if (needsWeb && AndroidBridge.saveLiveHtml) {
@@ -5240,7 +5247,7 @@ function applyUpdate(newHtml) {
                 pendingWebReloadVersion = remoteWeb;
             }
         }
-        startNativeApkUpdate(remoteApk, remoteApkUrl);
+        startNativeApkUpdate(remoteApk, remoteApkUrl, remoteApkSha256);
         return;
     }
 

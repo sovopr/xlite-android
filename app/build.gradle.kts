@@ -11,8 +11,12 @@ android {
         applicationId = "com.sovopr.xlite"
         minSdk = 24
         targetSdk = 34
-        versionCode = 19
-        versionName = "1.0.23"
+        val appVersion = (System.getenv("XLITE_VERSION") ?: "1.0.24").removePrefix("v")
+        versionName = appVersion
+        val envCode = System.getenv("XLITE_VERSION_CODE")?.toIntOrNull()
+        versionCode = if (envCode != null && envCode > 20) envCode else 20
+        val gitSha = (System.getenv("XLITE_GIT_SHA") ?: "local").take(7)
+        buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -47,6 +51,14 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    buildFeatures {
+        buildConfig = true
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -55,5 +67,6 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:okhttp-brotli:4.12.0")
+    testImplementation("junit:junit:4.13.2")
 }
 

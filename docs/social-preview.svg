@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" fill="none">
+  <defs>
+    <radialGradient id="neutralDepth" cx="50%" cy="0%" r="80%">
+      <stop offset="0%" stop-color="#1c1d20" />
+      <stop offset="60%" stop-color="#131416" />
+      <stop offset="100%" stop-color="#0e0f10" />
+    </radialGradient>
+
+    <pattern id="cleanGrid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#25262b" stroke-width="0.75" stroke-opacity="0.45" />
+      <circle cx="0" cy="0" r="1" fill="#383a42" fill-opacity="0.4" />
+    </pattern>
+
+    <linearGradient id="cardSurface" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1a1b1e" />
+      <stop offset="100%" stop-color="#141517" />
+    </linearGradient>
+
+    <linearGradient id="accentStrip" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#1d9bf0" />
+      <stop offset="100%" stop-color="#38bdf8" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background Layer -->
+  <rect width="1280" height="640" fill="url(#neutralDepth)" />
+  <rect width="1280" height="640" fill="url(#cleanGrid)" />
+
+  <!-- Outer technical frame -->
+  <rect x="24" y="24" width="1232" height="592" rx="12" fill="none" stroke="#2a2c30" stroke-width="1" />
+
+  <!-- Top Hero Header: Logo + Title + Open Source badge -->
+  <g transform="translate(80, 72)">
+    <g transform="scale(1.375)">
+      <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="13" fill="#000000" stroke="#2f3336" stroke-width="1.2" />
+      <path d="M14 13h9l30 39h-9z" fill="#f7f9fa" />
+      <path d="M18.5 15.5H21l27.5 34H46z" fill="#000000" />
+      <path d="M47 13h5L19 52h-5z" fill="#f7f9fa" />
+      <circle cx="51" cy="20" r="7" fill="#1d9bf0" opacity="0.16" />
+      <circle cx="51" cy="20" r="5" fill="#1d9bf0" opacity="0.28" />
+      <circle cx="51" cy="20" r="3.5" fill="#1d9bf0" />
+    </g>
+
+    <text x="112" y="62" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="58" font-weight="700" fill="#f3f4f6" letter-spacing="-1.5">X Lite</text>
+
+    <rect x="296" y="28" width="124" height="28" rx="14" fill="#202227" stroke="#373940" stroke-width="1" />
+    <text x="358" y="46" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="11" font-weight="700" fill="#9ca3af" text-anchor="middle" letter-spacing="1">OPEN SOURCE</text>
+  </g>
+
+  <!-- Hero Taglines -->
+  <g transform="translate(80, 206)">
+    <text font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="30" font-weight="700" fill="#e5e7eb" letter-spacing="-0.5">
+      Android X Client Engineered for Constrained Networks
+    </text>
+    <text y="38" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="18" font-weight="400" fill="#9ca3af">
+      Dual-stack GraphQL &amp; REST bridge · Lazy WebP media pipeline · App-private offline cache
+    </text>
+  </g>
+
+  <!-- 3 Feature Cards -->
+  <g transform="translate(80, 310)">
+    <!-- Card 1 -->
+    <g transform="translate(0, 0)">
+      <rect width="346" height="148" rx="10" fill="url(#cardSurface)" stroke="#282a2e" stroke-width="1" />
+      <rect x="24" y="24" width="32" height="4" rx="2" fill="url(#accentStrip)" />
+      <text x="24" y="54" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="18" font-weight="700" fill="#f3f4f6">Low-Bandwidth Engine</text>
+      <text x="24" y="82" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="14" fill="#9ca3af">OkHttp 4.12 + Brotli JSON transport</text>
+      <text x="24" y="105" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="14" fill="#9ca3af">On-demand &amp; Wi-Fi-aware avatars &amp; media</text>
+      <text x="24" y="128" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="14" fill="#9ca3af">Feed ad suppression &amp; seen-post sync</text>
+    </g>
+
+    <!-- Card 2 -->
+    <g transform="translate(387, 0)">
+      <rect width="346" height="148" rx="10" fill="url(#cardSurface)" stroke="#282a2e" stroke-width="1" />
+      <rect x="24" y="24" width="32" height="4" rx="2" fill="url(#accentStrip)" />
+      <text x="24" y="54" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="18" font-weight="700" fill="#f3f4f6">Verified OTA Updates</text>
+      <text x="24" y="82" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="14" fill="#9ca3af">Live ~150 KB web bundle updates</text>
+      <text x="24" y="105" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="14" fill="#9ca3af">SHA-256 checked GitHub Release APKs</text>
+      <text x="24" y="128" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="14" fill="#9ca3af">One-tap revert to bundled fallback</text>
+    </g>
+
+    <!-- Card 3 -->
+    <g transform="translate(774, 0)">
+      <rect width="346" height="148" rx="10" fill="url(#cardSurface)" stroke="#282a2e" stroke-width="1" />
+      <rect x="24" y="24" width="32" height="4" rx="2" fill="url(#accentStrip)" />
+      <text x="24" y="54" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="18" font-weight="700" fill="#f3f4f6">Hardened Bridge Policy</text>
+      <text x="24" y="82" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="14" fill="#9ca3af">Strict X/GitHub host allowlist enforcement</text>
+      <text x="24" y="105" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="14" fill="#9ca3af">Private storage cache &amp; offline archive</text>
+      <text x="24" y="128" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="14" fill="#9ca3af">Zero analytics SDKs or ad trackers</text>
+    </g>
+  </g>
+
+  <!-- Footer -->
+  <g transform="translate(80, 514)">
+    <rect width="1120" height="1" fill="#25262b" />
+    <text y="38" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="14" font-weight="500" fill="#9ca3af">
+      Kotlin · Android WebView · OkHttp 4.12 Brotli · Private Offline Cache · Material Dark OLED UI · API 24+
+    </text>
+    <text x="1120" y="38" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="14" font-weight="600" fill="#1d9bf0">
+      github.com/sovopr/xlite-android
+    </text>
+  </g>
+</svg>
