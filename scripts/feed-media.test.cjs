@@ -1505,6 +1505,198 @@ let txWarmChecksCompleted = false;
     [h1.ctx, h2.ctx].forEach(c => vm.runInContext("clearLocalSeenState(false);", c));
 })();
 
+// Scroll-Anchor & Aspect-Ratio Regression Suite (v1.0.32)
+(() => {
+    // 1. Parse media aspect ratios (original_info & video_info.aspect_ratio) and emit inline aspect-ratio styles
+    vm.runInContext("appConfig.image_mode = 'auto';", context);
+    const singlePhoto = vm.runInContext(`parseSingleTweet(${JSON.stringify({
+        rest_id: '7101',
+        legacy: {
+            full_text: 'Portrait photo',
+            extended_entities: {
+                media: [{
+                    media_url_https: 'https://pbs.twimg.com/media/port1.jpg',
+                    type: 'photo',
+                    original_info: { width: 1200, height: 1500 }
+                }]
+            }
+        }
+    })})`, context);
+    assert.equal(singlePhoto.media[0].width, 1200);
+    assert.equal(singlePhoto.media[0].height, 1500);
+    const singlePhotoHtml = vm.runInContext(`renderTweetHtml(${JSON.stringify(singlePhoto)})`, context);
+    assert.match(singlePhotoHtml, /class="tweet-img" style="aspect-ratio:1200 \/ 1500;"/);
+
+    const twoPhotos = vm.runInContext(`parseSingleTweet(${JSON.stringify({
+        rest_id: '7102',
+        legacy: {
+            full_text: 'Two photos',
+            extended_entities: {
+                media: [
+                    { media_url_https: 'https://pbs.twimg.com/media/p1.jpg', type: 'photo', original_info: { width: 1000, height: 1000 } },
+                    { media_url_https: 'https://pbs.twimg.com/media/p2.jpg', type: 'photo', original_info: { width: 1000, height: 1000 } }
+                ]
+            }
+        }
+    })})`, context);
+    const twoPhotosHtml = vm.runInContext(`renderTweetHtml(${JSON.stringify(twoPhotos)})`, context);
+    assert.doesNotMatch(twoPhotosHtml, /style="aspect-ratio:/, '2+ grid cells keep fixed CSS grid height');
+
+    const ratioVideo = vm.runInContext(`parseSingleTweet(${JSON.stringify({
+        rest_id: '7103',
+        legacy: {
+            full_text: 'Portrait video + quoted',
+            extended_entities: {
+                media: [{
+                    media_url_https: 'https://pbs.twimg.com/ext_tw_video_thumb/rv.jpg',
+                    type: 'video',
+                    video_info: {
+                        aspect_ratio: [9, 16],
+                        duration_millis: 3200,
+                        variants: [{ content_type: 'video/mp4', bitrate: 832000, url: 'https://video.twimg.com/rv.mp4' }]
+                    }
+                }]
+            }
+        },
+        quoted_status_result: {
+            result: {
+                rest_id: '777',
+                core: { user_results: { result: { core: { name: 'Q', screen_name: 'q' } } } },
+                legacy: { id_str: '777', full_text: 'Quoted post' }
+            }
+        }
+    })})`, context);
+    assert.equal(ratioVideo.media[0].width, 9);
+    assert.equal(ratioVideo.media[0].height, 16);
+    const videoMarkup = vm.runInContext(`renderTweetHtml(${JSON.stringify(ratioVideo)})`, context);
+    assert.match(videoMarkup, /class="tweet-video" style="aspect-ratio:9 \/ 16;"/);
+    assert.match(videoMarkup, /data-quoted-id="777"/);
+    vm.runInContext("appConfig.image_mode = 'off';", context);
+
+    // 2. Element-anchored restore compensates for collapsed height above clicked tweet, runs before observers, cancels on touchstart, and survives Thread -> Profile -> Back
+    const cardState = { absTop108: 3200 };
+    const anchorOrder = [];
+    const scrollLog = [];
+    const listeners = {};
+    const scheduledTimers = [];
+    const fakeMain = {
+        _html: '',
+        _detached: false,
+        get innerHTML() { return this._html; },
+        set innerHTML(v) { this._html = v; this._detached = !v; },
+        get firstChild() { return this._html ? { html: this._html } : null; },
+        appendChild(frag) { this._html = frag.firstChild?.html || ''; this._detached = false; frag.node = null; },
+        querySelectorAll(sel) {
+            if (this._detached || !this._html) return [];
+            if (sel.includes('data-id')) {
+                return [{
+                    getAttribute(a) { return a === 'data-id' ? '108' : null; },
+                    getBoundingClientRect() {
+                        const top = cardState.absTop108 - anchorCtx.scrollY;
+                        return { top, bottom: top + 300, height: 300, width: 320 };
+                    }
+                }];
+            }
+            return [];
+        }
+    };
+    const noopEl = () => ({ style: {}, classList: { toggle() {}, add() {}, remove() {} }, appendChild() {}, querySelectorAll() { return []; }, innerHTML: '' });
+    const anchorCtx = {
+        console,
+        URL,
+        setTimeout(fn, delay) { const id = scheduledTimers.length + 1; scheduledTimers.push({ id, fn, delay, cleared: false }); return id; },
+        clearTimeout(id) { const item = scheduledTimers.find(t => t.id === id); if (item) item.cleared = true; },
+        IntersectionObserver: class {
+            constructor() { anchorOrder.push({ step: 'observer', scrollY: anchorCtx.scrollY }); }
+            observe() {}
+            disconnect() {}
+        },
+        document: {
+            getElementById(id) {
+                if (id === 'mainContent') return fakeMain;
+                if (id === 'feedContainer') return noopEl();
+                if (id === 'tabNav') return noopEl();
+                if (id === 'scrollTopBtn') return noopEl();
+                return null;
+            },
+            querySelector() { return null; },
+            querySelectorAll() { return []; },
+            createDocumentFragment() {
+                return {
+                    node: null,
+                    get firstChild() { return this.node; },
+                    appendChild(n) { this.node = n; fakeMain._html = ''; fakeMain._detached = true; }
+                };
+            },
+            body: { classList: { toggle() {} } },
+            documentElement: { clientHeight: 800, scrollHeight: 6000 }
+        },
+        AndroidBridge: { getCache() { return ''; }, saveCache() {} },
+        localStorage: { getItem() { return null; }, setItem() {} },
+        location: { hash: '', pathname: '/index.html', search: '' },
+        scrollY: 3080,
+        innerHeight: 800,
+        scrollTo(_x, y) { anchorCtx.scrollY = y; scrollLog.push(y); anchorOrder.push({ step: 'scrollTo', scrollY: y }); },
+        addEventListener(evt, fn) { listeners[evt] = fn; },
+        removeEventListener(evt) { delete listeners[evt]; },
+        history: {
+            state: null,
+            pushState(s, _t, h) { this.state = s; },
+            replaceState(s) { this.state = s; },
+            back() { this.state = null; anchorCtx.onpopstate({ state: null }); }
+        }
+    };
+    anchorCtx.window = anchorCtx;
+    vm.createContext(anchorCtx);
+    vm.runInContext(script, anchorCtx);
+    vm.runInContext(`
+        performAsyncGet = () => {};
+        currentTab = 'following';
+        currentFeedOrigin = 'following';
+        currentView = 'feed';
+        document.getElementById('mainContent').innerHTML = '<div id="feedContainer"><div class="tweet" data-id="108">Card</div></div>';
+    `, anchorCtx);
+
+    // Click tweet 108 while scrolled to 3080 (rect.top = 120), then verify thread resets to 0
+    anchorCtx.viewThread('108');
+    assert.equal(vm.runInContext('savedFeedScrollY', anchorCtx), 3080);
+    assert.equal(vm.runInContext('savedFeedAnchor.attr', anchorCtx), 'data-id');
+    assert.equal(vm.runInContext('savedFeedAnchor.id', anchorCtx), '108');
+    assert.equal(vm.runInContext('savedFeedAnchor.offsetTop', anchorCtx), 120);
+    assert.equal(anchorCtx.scrollY, 0, 'Opening thread resets thread view scroll to top');
+
+    // Simulate 1900px height collapse above card 108 while in thread, then go back
+    cardState.absTop108 = 1300;
+    anchorOrder.length = 0;
+    anchorCtx.goBackToFeed();
+    assert.equal(anchorCtx.scrollY, 1180, 'Restore anchors card 108 back to screen top=120 despite -1900px collapse above');
+    const firstScrollIdx = anchorOrder.findIndex(e => e.step === 'scrollTo' && e.scrollY === 1180);
+    const firstObsIdx = anchorOrder.findIndex(e => e.step === 'observer');
+    assert.ok(firstScrollIdx !== -1 && firstObsIdx !== -1 && firstScrollIdx < firstObsIdx, 'scrollTo runs BEFORE IntersectionObservers are re-attached');
+
+    // Test user touchstart cancels pending stabilization timers
+    assert.ok(typeof listeners.touchstart === 'function');
+    listeners.touchstart();
+    cardState.absTop108 = 2500;
+    const beforeTimerScroll = anchorCtx.scrollY;
+    scheduledTimers.forEach(t => { if (!t.cleared) t.fn(); });
+    assert.equal(anchorCtx.scrollY, beforeTimerScroll, 'Pending stabilization timers stay canceled after user touchstart');
+
+    // Feed -> Thread -> Author Profile -> Back keeps savedFeedNodes & restores anchor without reload
+    anchorCtx.scrollY = 1180;
+    cardState.absTop108 = 1300;
+    anchorCtx.performSignedGet = () => {};
+    anchorCtx.viewThread('108');
+    anchorCtx.openProfile('alice_dev');
+    assert.ok(vm.runInContext('Boolean(savedFeedNodes && savedFeedAnchor)', anchorCtx), 'Thread -> Profile preserves savedFeedNodes and savedFeedAnchor');
+    let loadFeedCalled = false;
+    anchorCtx.loadFeed = () => { loadFeedCalled = true; };
+    anchorCtx.restoreFeedView('following', false);
+    assert.equal(loadFeedCalled, false, 'Returning from Thread -> Profile restores saved feed DOM instead of calling loadFeed');
+    assert.equal(anchorCtx.scrollY, 1180, 'Returning from Thread -> Profile restores exact anchored scrollY');
+    scheduledTimers.forEach(t => { if (!t.cleared) t.fn(); });
+})();
+
 process.on('beforeExit', () => {
     assert.equal(txWarmChecksCompleted, true, 'Async warm ClientTransaction checks must finish completely');
 });

@@ -216,8 +216,6 @@ body.in-feed .status-bar {
   border-bottom: 1px solid var(--border);
   max-width: 100%;
   min-width: 0;
-  content-visibility: auto;
-  contain-intrinsic-size: 0 210px;
 }
 .tweet:active {
   background: rgba(255, 255, 255, 0.02);
@@ -1952,9 +1950,9 @@ let isFetching = false;
 let pendingCallbacks = {};
 const pendingActionLocks = {};
 const activeImageLoads = new Set();
-const APP_VERSION = '1.0.31';
-const APP_BUILD = '2026.11.13.16';
-const LATEST_APK_VERSION = '1.0.31';
+const APP_VERSION = '1.0.32';
+const APP_BUILD = '2026.11.14.1';
+const LATEST_APK_VERSION = '1.0.32';
 const LATEST_APK_URL = 'https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk';
 const LATEST_APK_SHA256 = '';
 let activeApkDownloadState = null;
@@ -1982,18 +1980,24 @@ let threadOriginView = 'feed';
 let activeThreadTweetId = null;
 let savedSearchMarkup = '';
 let savedSearchScrollY = 0;
+let savedSearchAnchor = null;
 let savedFeedMarkup = '';
 let savedFeedNodes = null;
 let savedFeedScrollY = 0;
+let savedFeedAnchor = null;
 let savedFeedTab = '';
 let savedFeedRequestInterrupted = false;
+let activeScrollRestoreToken = 0;
+let activeScrollRestoreCancel = null;
 let viewerIdentity = null;
 let profileState = null;
 let savedProfileMarkup = '';
 let savedProfileScrollY = 0;
+let savedProfileAnchor = null;
 let notifState = null;
 let savedNotifMarkup = '';
 let savedNotifScrollY = 0;
+let savedNotifAnchor = null;
 let composeQuoteTweetId = null;
 let lightboxState = null;
 let seenForYouIds = new Set();
@@ -2197,8 +2201,11 @@ function saveImageModePref(mode, opts = {}) {
 
     appConfig.image_mode = normalized;
     syncRichBodyClass();
+    if (typeof cancelPendingScrollRestore === 'function') cancelPendingScrollRestore();
     savedFeedMarkup = '';
     savedFeedNodes = null;
+    savedFeedAnchor = null;
+    savedFeedRequestInterrupted = false;
     updateHeaderActions();
     return normalized;
 }
@@ -3379,13 +3386,16 @@ function disconnectFeedAutoLoader() {
 }
 
 function nav(view) {
+    if (typeof cancelPendingScrollRestore === 'function') cancelPendingScrollRestore();
     if (typeof closeLightbox === 'function' && lightboxState) closeLightbox();
     const returningFromThread = currentView === 'thread' && threadOriginView === 'feed';
     const returningProfile = currentView === 'thread' && threadOriginView === 'profile';
     const returningNotif = currentView === 'thread' && threadOriginView === 'notifications';
-    if (currentView === 'thread' && view !== 'feed') {
+    if (view !== 'feed' && view !== 'profile') {
         savedFeedMarkup = '';
         savedFeedNodes = null;
+        savedFeedAnchor = null;
+        savedFeedRequestInterrupted = false;
     }
     if (view !== 'post') composeQuoteTweetId = null;
     if (view !== 'feed') {
@@ -3438,8 +3448,11 @@ function switchFeed(tab) {
     }
     prebufferedNextPage.foryou = null;
     prebufferedNextPage.following = null;
+    if (typeof cancelPendingScrollRestore === 'function') cancelPendingScrollRestore();
     savedFeedMarkup = '';
     savedFeedNodes = null;
+    savedFeedAnchor = null;
+    savedFeedRequestInterrupted = false;
     activeThreadTweetId = null;
     currentView = 'feed';
     viewGeneration++;
@@ -4286,9 +4299,12 @@ function renderMediaHtml(tw) {
             photos.slice(0, 4).forEach((m, idx) => {
                 const imgId = 'img_' + Math.random().toString(36).substr(2, 9);
                 const previewUrl = mediaPreviewUrl(m.url, false);
+                const imgAspectStyle = (gridCount === 1 && Number(m.width) > 0 && Number(m.height) > 0)
+                    ? ` style="aspect-ratio:${Math.max(1, Math.round(Number(m.width)))} / ${Math.max(1, Math.round(Number(m.height)))};"`
+                    : '';
                 out += `
                 <div class="media-cell-${idx}">
-                    <img id="${imgId}" src="${localImageUrl(previewUrl, imgMode)}" class="tweet-img" loading="lazy" decoding="async" data-preview-url="${escapeHtml(previewUrl)}" data-original-url="${escapeHtml(m.url)}" onclick="openLightbox('${escapeHtml(tw.id)}', ${idx}, event)" onerror="retryOriginalPreview(this)" />
+                    <img id="${imgId}" src="${localImageUrl(previewUrl, imgMode)}" class="tweet-img"${imgAspectStyle} loading="lazy" decoding="async" data-preview-url="${escapeHtml(previewUrl)}" data-original-url="${escapeHtml(m.url)}" onclick="openLightbox('${escapeHtml(tw.id)}', ${idx}, event)" onerror="retryOriginalPreview(this)" />
                 </div>`;
             });
             out += '</div>';
@@ -4324,9 +4340,12 @@ function renderMediaHtml(tw) {
                     : (autoplayEnabled
                         ? 'controls muted loop playsinline data-autoplay="1" preload="metadata" onplay="pauseOtherVideos(this)"'
                         : 'controls playsinline preload="metadata" onplay="pauseOtherVideos(this)"');
+                const vidAspectStyle = (Number(m.width) > 0 && Number(m.height) > 0)
+                    ? ` style="aspect-ratio:${Math.max(1, Math.round(Number(m.width)))} / ${Math.max(1, Math.round(Number(m.height)))};"`
+                    : '';
                 out += `
                 <div class="video-wrap">
-                    <video id="${vidId}" class="tweet-video" ${videoAttrs} poster="${posterSrc}" data-prefetch-url="${escapeHtml(initialRaw)}" src="${escapeHtml(srcUrl)}"${fallbackAttrs}></video>
+                    <video id="${vidId}" class="tweet-video"${vidAspectStyle} ${videoAttrs} poster="${posterSrc}" data-prefetch-url="${escapeHtml(initialRaw)}" src="${escapeHtml(srcUrl)}"${fallbackAttrs}></video>
                     ${isGif ? '<span class="gif-pill">GIF</span>' : ''}
                 </div>`;
             } else {
@@ -4529,7 +4548,7 @@ function renderQuotedHtml(quotedTweet) {
     const qCard = appConfig.image_mode === 'auto' && !qMedia && !qPoll ? renderCardHtml(q.card_preview) : '';
     const qNote = renderCommunityNoteHtml(q.community_note, true);
     return `
-        <div class="quoted-box" onclick="viewThread('${escapeHtml(q.id)}'); event.stopPropagation();">
+        <div class="quoted-box" data-quoted-id="${escapeHtml(q.id)}" onclick="viewThread('${escapeHtml(q.id)}'); event.stopPropagation();">
             <div class="tweet-header" style="margin-bottom:4px;">
                 ${renderAvatarHtml(q, 'mini')}
                 <div class="tweet-meta">
@@ -4938,6 +4957,20 @@ function parseSingleTweet(tw) {
                 duration_ms: m.video_info?.duration_millis || 0,
                 alt_text: decodeHtmlEntities(m.ext_alt_text || m.alt_text || '')
             };
+            let origW = Number(m.original_info?.width || m.sizes?.large?.w || m.sizes?.medium?.w || 0) || 0;
+            let origH = Number(m.original_info?.height || m.sizes?.large?.h || m.sizes?.medium?.h || 0) || 0;
+            if (!(origW > 0 && origH > 0) && Array.isArray(m.video_info?.aspect_ratio) && m.video_info.aspect_ratio.length === 2) {
+                const arW = Number(m.video_info.aspect_ratio[0]) || 0;
+                const arH = Number(m.video_info.aspect_ratio[1]) || 0;
+                if (arW > 0 && arH > 0) {
+                    origW = arW;
+                    origH = arH;
+                }
+            }
+            if (origW > 0 && origH > 0) {
+                entry.width = origW;
+                entry.height = origH;
+            }
             if (videoUrl) entry.video_url = videoUrl;
             if (balancedVideoUrl) entry.balanced_video_url = balancedVideoUrl;
             if (hdVideoUrl) entry.hd_video_url = hdVideoUrl;
@@ -5383,40 +5416,216 @@ function getCurrentScrollY() {
     );
 }
 
-function restoreScrollPosition(scrollY) {
-    const target = Math.max(0, Number(scrollY) || 0);
-    const canRestoreView = () => ['feed', 'search', 'profile', 'notifications'].includes(currentView);
-    if (typeof window.scrollTo === 'function') window.scrollTo(0, target);
-    if (typeof requestAnimationFrame === 'function') {
-        requestAnimationFrame(() => {
-            if (canRestoreView()) window.scrollTo(0, target);
+function cancelPendingScrollRestore() {
+    activeScrollRestoreToken++;
+    if (typeof activeScrollRestoreCancel === 'function') {
+        const fn = activeScrollRestoreCancel;
+        activeScrollRestoreCancel = null;
+        try { fn(); } catch (e) {}
+    }
+}
+
+function getScrollRestoreRoot(root) {
+    if (root && typeof root.querySelectorAll === 'function') return root;
+    if (typeof document !== 'undefined') return document.getElementById('mainContent') || document;
+    return null;
+}
+
+function isRectMeasurable(rect) {
+    return !!(rect && (Number(rect.height) > 0 || Number(rect.width) > 0));
+}
+
+function captureViewAnchor(root, tweetId, capturedScrollY) {
+    const scrollY = Math.max(0, Number(capturedScrollY) || 0);
+    const scope = getScrollRestoreRoot(root);
+    if (!scope || typeof scope.querySelectorAll !== 'function') return null;
+
+    const makeAnchor = (el, attr, idVal) => {
+        if (!el || !idVal || typeof el.getBoundingClientRect !== 'function') return null;
+        const rect = el.getBoundingClientRect();
+        if (!isRectMeasurable(rect)) return null;
+        const allAttrNodes = Array.from(scope.querySelectorAll(`[${attr}]`));
+        const matchingNodes = allAttrNodes.filter(n => n.getAttribute(attr) === idVal);
+        const matchIndex = Math.max(0, matchingNodes.indexOf(el));
+        return {
+            attr,
+            id: idVal,
+            matchIndex,
+            offsetTop: Number(rect.top) || 0,
+            scrollY
+        };
+    };
+
+    const viewportH = (typeof window !== 'undefined' && Number(window.innerHeight))
+        || (typeof document !== 'undefined' && document.documentElement && Number(document.documentElement.clientHeight))
+        || 800;
+
+    const targetId = tweetId ? String(tweetId) : '';
+    if (targetId) {
+        const candidates = Array.from(scope.querySelectorAll('[data-id], [data-tweet-id], [data-quoted-id]')).filter(el =>
+            el.getAttribute('data-id') === targetId
+            || el.getAttribute('data-tweet-id') === targetId
+            || el.getAttribute('data-quoted-id') === targetId
+        );
+        const measurable = candidates.filter(el =>
+            typeof el.getBoundingClientRect === 'function' && isRectMeasurable(el.getBoundingClientRect())
+        );
+        if (measurable.length > 0) {
+            let chosen = measurable[0];
+            let bestScore = Infinity;
+            measurable.forEach(el => {
+                const r = el.getBoundingClientRect();
+                const inViewport = r.bottom > 0 && r.top < viewportH;
+                const score = inViewport ? Math.max(0, r.top) : (100000 + Math.abs(r.top));
+                if (score < bestScore) {
+                    bestScore = score;
+                    chosen = el;
+                }
+            });
+            const attr = chosen.getAttribute('data-id') === targetId
+                ? 'data-id'
+                : (chosen.getAttribute('data-tweet-id') === targetId ? 'data-tweet-id' : 'data-quoted-id');
+            return makeAnchor(chosen, attr, targetId);
+        }
+        // In test stubs where layout rects are all zeros, skip anchoring so integer scrollY fallback applies cleanly.
+        if (candidates.length > 0) return null;
+    }
+
+    const cards = Array.from(scope.querySelectorAll('[data-id], [data-tweet-id]'));
+    for (let i = 0; i < cards.length; i++) {
+        const el = cards[i];
+        if (typeof el.getBoundingClientRect !== 'function') continue;
+        const rect = el.getBoundingClientRect();
+        if (isRectMeasurable(rect) && rect.bottom > 56 && rect.top < viewportH) {
+            const attr = el.getAttribute('data-id') ? 'data-id' : 'data-tweet-id';
+            const cardId = el.getAttribute(attr);
+            if (cardId) return makeAnchor(el, attr, cardId);
+        }
+    }
+    return null;
+}
+
+function findAnchorElement(root, anchor) {
+    if (!anchor || !anchor.id) return null;
+    const scope = getScrollRestoreRoot(root);
+    if (!scope || typeof scope.querySelectorAll !== 'function') return null;
+    const attr = anchor.attr || 'data-id';
+    const targetId = String(anchor.id);
+    const primary = Array.from(scope.querySelectorAll(`[${attr}]`)).filter(el => el.getAttribute(attr) === targetId);
+    if (primary.length > 0) {
+        const idx = Number(anchor.matchIndex) || 0;
+        return primary[idx] || primary[0];
+    }
+    const fallback = Array.from(scope.querySelectorAll('[data-id], [data-tweet-id], [data-quoted-id]')).filter(el =>
+        el.getAttribute('data-id') === targetId
+        || el.getAttribute('data-tweet-id') === targetId
+        || el.getAttribute('data-quoted-id') === targetId
+    );
+    return fallback[0] || null;
+}
+
+function computeAnchorTargetY(root, anchor, fallbackScrollY) {
+    const fallback = Math.max(0, Number(fallbackScrollY) || 0);
+    if (!anchor) return fallback;
+    const el = findAnchorElement(root, anchor);
+    if (!el || typeof el.getBoundingClientRect !== 'function') return fallback;
+    const rect = el.getBoundingClientRect();
+    if (!isRectMeasurable(rect)) return fallback;
+    const curY = getCurrentScrollY();
+    const absTop = curY + Number(rect.top);
+    return Math.max(0, Math.round(absTop - Number(anchor.offsetTop || 0)));
+}
+
+function restoreScrollPosition(scrollY, anchor = null, root = null) {
+    cancelPendingScrollRestore();
+    const token = ++activeScrollRestoreToken;
+    const fallbackTarget = Math.max(0, Number(scrollY) || 0);
+    const canRestoreView = () => activeScrollRestoreToken === token && ['feed', 'search', 'profile', 'notifications'].includes(currentView);
+    const anchorRoot = getScrollRestoreRoot(root);
+    const timers = [];
+    let rafId = null;
+    let listenersAttached = false;
+
+    const detachInputCancelListeners = () => {
+        if (!listenersAttached || typeof window === 'undefined' || typeof window.removeEventListener !== 'function') return;
+        listenersAttached = false;
+        ['touchstart', 'pointerdown', 'wheel', 'keydown'].forEach(evt => {
+            window.removeEventListener(evt, onUserScrollInput, true);
+        });
+    };
+
+    const cleanup = () => {
+        detachInputCancelListeners();
+        while (timers.length > 0) {
+            const id = timers.pop();
+            if (typeof clearTimeout === 'function') clearTimeout(id);
+        }
+        if (rafId !== null && typeof cancelAnimationFrame === 'function') {
+            cancelAnimationFrame(rafId);
+            rafId = null;
+        }
+        if (activeScrollRestoreCancel === cleanup) activeScrollRestoreCancel = null;
+    };
+
+    function onUserScrollInput() {
+        cancelPendingScrollRestore();
+    }
+
+    activeScrollRestoreCancel = cleanup;
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        listenersAttached = true;
+        ['touchstart', 'pointerdown', 'wheel', 'keydown'].forEach(evt => {
+            window.addEventListener(evt, onUserScrollInput, { passive: true, capture: true });
         });
     }
-    setTimeout(() => {
-        if (canRestoreView()) window.scrollTo(0, target);
-    }, 60);
+
+    const applyPass = () => {
+        if (!canRestoreView()) {
+            cleanup();
+            return;
+        }
+        const target = anchor ? computeAnchorTargetY(anchorRoot, anchor, fallbackTarget) : fallbackTarget;
+        if (typeof window.scrollTo === 'function') window.scrollTo(0, target);
+    };
+
+    applyPass();
+    if (typeof requestAnimationFrame === 'function') {
+        rafId = requestAnimationFrame(() => {
+            rafId = null;
+            applyPass();
+        });
+    }
+    if (typeof setTimeout === 'function') {
+        [60, 180, 340].forEach(delay => {
+            timers.push(setTimeout(applyPass, delay));
+        });
+        timers.push(setTimeout(cleanup, 400));
+    }
 }
 
 // Conversation / Thread View
 function viewThread(tweetId, focusReply = false) {
+    if (typeof cancelPendingScrollRestore === 'function') cancelPendingScrollRestore();
     markTweetSeen(tweetId);
     const capturedScrollY = getCurrentScrollY();
+    const mainContainer = document.getElementById('mainContent');
     if (currentView !== 'thread') {
         threadOriginView = currentView;
         if (currentView === 'feed') {
             savedFeedScrollY = capturedScrollY;
+            savedFeedAnchor = captureViewAnchor(mainContainer, tweetId, capturedScrollY);
             savedFeedTab = currentTab;
             savedFeedRequestInterrupted = !!(isFetching && isFetching.startsWith(currentTab + ':' + viewGeneration + ':'));
             if (savedFeedRequestInterrupted) isFetching = false;
             disconnectSeenObserver();
             disconnectFeedAutoLoader();
             pauseAllFeedVideos();
-            const feedContainer = document.getElementById('mainContent');
-            savedFeedMarkup = feedContainer.innerHTML;
+            savedFeedMarkup = mainContainer.innerHTML;
             savedFeedNodes = document.createDocumentFragment();
-            while (feedContainer.firstChild) savedFeedNodes.appendChild(feedContainer.firstChild);
+            while (mainContainer.firstChild) savedFeedNodes.appendChild(mainContainer.firstChild);
         } else if (currentView === 'search') {
             savedSearchScrollY = capturedScrollY;
+            savedSearchAnchor = captureViewAnchor(mainContainer, tweetId, capturedScrollY);
             if (searchState && searchState.loading) {
                 searchState.loading = false;
                 if (searchState.cursor) renderSearchLoadMore('Search was interrupted. Retry to continue.');
@@ -5428,11 +5637,13 @@ function viewThread(tweetId, focusReply = false) {
             savedSearchMarkup = document.getElementById('mainContent').innerHTML;
         } else if (currentView === 'profile') {
             savedProfileScrollY = capturedScrollY;
+            savedProfileAnchor = captureViewAnchor(mainContainer, tweetId, capturedScrollY);
             pauseAllFeedVideos();
-            savedProfileMarkup = document.getElementById('mainContent').innerHTML;
+            savedProfileMarkup = mainContainer.innerHTML;
         } else if (currentView === 'notifications') {
             savedNotifScrollY = capturedScrollY;
-            savedNotifMarkup = document.getElementById('mainContent').innerHTML;
+            savedNotifAnchor = captureViewAnchor(mainContainer, tweetId, capturedScrollY);
+            savedNotifMarkup = mainContainer.innerHTML;
         }
     }
     currentView = 'thread';
@@ -5643,6 +5854,8 @@ function renderThreadView(tweetId, focusReply = false) {
                 if (typeof input.focus === 'function') input.focus();
             }
         }, 50);
+    } else if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+        window.scrollTo(0, 0);
     }
 
     let variables = {
@@ -5718,16 +5931,20 @@ function restoreNonFeedOrigin() {
         currentView = 'search';
         viewGeneration++;
         syncInFeedBodyClass();
-        document.getElementById('mainContent').innerHTML = savedSearchMarkup;
+        const container = document.getElementById('mainContent');
+        const scrollY = savedSearchScrollY;
+        const anchor = savedSearchAnchor;
+        container.innerHTML = savedSearchMarkup;
+        savedSearchMarkup = '';
+        savedSearchAnchor = null;
         blurActiveSearchInput();
         syncVisibleTweetActions();
-        initVideoAutoPauseObserver(document.getElementById('mainContent'));
         document.getElementById('tabNav').style.display = 'none';
         document.querySelectorAll('.bottom-item').forEach((el, idx) => el.classList.toggle('active', idx === 1));
         updateHeaderActions();
+        restoreScrollPosition(scrollY, anchor, container);
+        initVideoAutoPauseObserver(container);
         updateScrollTopButton();
-        restoreScrollPosition(savedSearchScrollY);
-        savedSearchMarkup = '';
         return true;
     }
     if (threadOriginView === 'profile' && savedProfileMarkup) {
@@ -5735,15 +5952,19 @@ function restoreNonFeedOrigin() {
         currentView = 'profile';
         viewGeneration++;
         syncInFeedBodyClass();
-        document.getElementById('mainContent').innerHTML = savedProfileMarkup;
+        const container = document.getElementById('mainContent');
+        const scrollY = savedProfileScrollY;
+        const anchor = savedProfileAnchor;
+        container.innerHTML = savedProfileMarkup;
+        savedProfileMarkup = '';
+        savedProfileAnchor = null;
         syncVisibleTweetActions();
-        initVideoAutoPauseObserver(document.getElementById('mainContent'));
         document.getElementById('tabNav').style.display = 'none';
         document.querySelectorAll('.bottom-item').forEach(el => el.classList.remove('active'));
         updateHeaderActions();
+        restoreScrollPosition(scrollY, anchor, container);
+        initVideoAutoPauseObserver(container);
         updateScrollTopButton();
-        restoreScrollPosition(savedProfileScrollY);
-        savedProfileMarkup = '';
         return true;
     }
     if (threadOriginView === 'notifications' && savedNotifMarkup) {
@@ -5751,13 +5972,17 @@ function restoreNonFeedOrigin() {
         currentView = 'notifications';
         viewGeneration++;
         syncInFeedBodyClass();
-        document.getElementById('mainContent').innerHTML = savedNotifMarkup;
+        const container = document.getElementById('mainContent');
+        const scrollY = savedNotifScrollY;
+        const anchor = savedNotifAnchor;
+        container.innerHTML = savedNotifMarkup;
+        savedNotifMarkup = '';
+        savedNotifAnchor = null;
         document.getElementById('tabNav').style.display = 'none';
         document.querySelectorAll('.bottom-item').forEach(el => el.classList.remove('active'));
         updateHeaderActions();
+        restoreScrollPosition(scrollY, anchor, container);
         updateScrollTopButton();
-        restoreScrollPosition(savedNotifScrollY);
-        savedNotifMarkup = '';
         return true;
     }
     return false;
@@ -5794,8 +6019,16 @@ function restoreFeedView(targetTab, fromThread = false) {
     if (window.location.hash.startsWith('#thread-')) {
         try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch(e){}
     }
-    if (fromThread && savedFeedMarkup && savedFeedTab === currentTab && savedFeedMarkup.includes('id="feedContainer"') && currentTab !== 'cache') {
+    const canRestoreSavedFeed = Boolean(
+        savedFeedMarkup &&
+        savedFeedTab === currentTab &&
+        savedFeedMarkup.includes('id="feedContainer"') &&
+        currentTab !== 'cache' &&
+        (fromThread || savedFeedNodes)
+    );
+    if (canRestoreSavedFeed) {
         const scrollY = savedFeedScrollY;
+        const anchor = savedFeedAnchor;
         const container = document.getElementById('mainContent');
         if (savedFeedNodes && savedFeedNodes.firstChild) {
             container.innerHTML = '';
@@ -5804,9 +6037,6 @@ function restoreFeedView(targetTab, fromThread = false) {
             container.innerHTML = savedFeedMarkup;
         }
         syncVisibleTweetActions();
-        initSeenObserver(document.getElementById('feedContainer'));
-        initVideoAutoPauseObserver(container);
-        attachFeedInfiniteScroll(currentTab);
         if (savedFeedRequestInterrupted) {
             setFeedProgress(false, 'Loading interrupted. Pull down to retry.', true);
             const loadMoreButton = document.querySelector('#loadMoreBox button');
@@ -5817,16 +6047,24 @@ function restoreFeedView(targetTab, fromThread = false) {
         }
         savedFeedMarkup = '';
         savedFeedNodes = null;
+        savedFeedAnchor = null;
         savedFeedRequestInterrupted = false;
-        restoreScrollPosition(scrollY);
+        restoreScrollPosition(scrollY, anchor, container);
+        initSeenObserver(document.getElementById('feedContainer'));
+        initVideoAutoPauseObserver(container);
+        attachFeedInfiniteScroll(currentTab);
         updateScrollTopButton();
         return;
     }
     const cacheScrollY = fromThread && currentTab === 'cache' ? savedFeedScrollY : null;
+    const cacheAnchor = fromThread && currentTab === 'cache' ? savedFeedAnchor : null;
+    if (cacheScrollY === null && typeof cancelPendingScrollRestore === 'function') cancelPendingScrollRestore();
     savedFeedMarkup = '';
     savedFeedNodes = null;
+    savedFeedAnchor = null;
+    savedFeedRequestInterrupted = false;
     loadFeed(currentTab);
-    if (cacheScrollY !== null) restoreScrollPosition(cacheScrollY);
+    if (cacheScrollY !== null) restoreScrollPosition(cacheScrollY, cacheAnchor, document.getElementById('mainContent'));
 }
 
 // History stack back navigation
@@ -6633,7 +6871,7 @@ function renderNotifications() {
                 : (firstUser?.screen_name ? `openProfile('${escapeHtml(firstUser.screen_name)}')` : '');
             const iconColor = iconKey === 'heart_icon' ? '#f91880' : (iconKey === 'retweet_icon' ? '#00ba7c' : 'var(--accent)');
             return `
-            <div class="notif-row" ${clickAction ? `onclick="${clickAction}"` : ''}>
+            <div class="notif-row"${targetTweetId ? ` data-id="${escapeHtml(targetTweetId)}"` : ''} ${clickAction ? `onclick="${clickAction}"` : ''}>
                 <div class="notif-icon" style="color:${iconColor};">${icon}</div>
                 <div style="flex:1; min-width:0;">
                     <div style="font-size:14px; font-weight:600;">${escapeHtml(msg)} ${timeTxt ? `<span style="color:var(--text-muted); font-weight:400;">· ${escapeHtml(timeTxt)}</span>` : ''}</div>
@@ -6878,8 +7116,11 @@ function handleSettingPrefChange(kind, rawValue) {
         appConfig.sync_seen = sync;
         label = 'Sync Seen Posts: ' + (sync ? 'Enabled' : 'Disabled');
     }
+    if (typeof cancelPendingScrollRestore === 'function') cancelPendingScrollRestore();
     savedFeedMarkup = '';
     savedFeedNodes = null;
+    savedFeedAnchor = null;
+    savedFeedRequestInterrupted = false;
     const notice = document.getElementById('settingsPrefNotice');
     if (notice && label) notice.innerHTML = uiSvg('check') + ' Saved ' + escapeHtml(label);
     if (label) showStatus('Saved — ' + label, false, 1800);
@@ -6888,8 +7129,11 @@ function handleSettingPrefChange(kind, rawValue) {
 function clearCachedTweets() {
     if (window.AndroidBridge && typeof AndroidBridge.clearCache === 'function') AndroidBridge.clearCache();
     clearLocalSeenState(true);
+    if (typeof cancelPendingScrollRestore === 'function') cancelPendingScrollRestore();
     savedFeedMarkup = '';
     savedFeedNodes = null;
+    savedFeedAnchor = null;
+    savedFeedRequestInterrupted = false;
     alert('Cache cleared');
 }
 
@@ -6927,8 +7171,11 @@ function saveSettings(e) {
     saveImageModePref(mode, { skipNative: true });
     appConfig = { auth_token: auth, ct0: ct0, image_mode: mode, avatar_mode: avatarMode, hide_ads: hideAds, sync_seen: syncSeen, autoplay_videos: autoplayVideos };
     syncRichBodyClass();
+    if (typeof cancelPendingScrollRestore === 'function') cancelPendingScrollRestore();
     savedFeedMarkup = '';
     savedFeedNodes = null;
+    savedFeedAnchor = null;
+    savedFeedRequestInterrupted = false;
     updateHeaderActions();
     alert("Saved");
     nav('feed');
