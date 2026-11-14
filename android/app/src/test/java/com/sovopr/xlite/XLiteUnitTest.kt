@@ -347,8 +347,8 @@ class XLiteUnitTest {
                 upstreamHits.incrementAndGet()
                 val range = XLitePolicy.parseByteRange(reqRange)
                 if (range != null) {
-                    val start = range.startByte.coerceIn(0L, (payload.size - 1).toLong()).toInt()
-                    val end = (range.endInclusive ?: (payload.size - 1).toLong())
+                    val start = range.start.coerceIn(0L, (payload.size - 1).toLong()).toInt()
+                    val end = (range.end ?: (payload.size - 1).toLong())
                         .coerceIn(start.toLong(), (payload.size - 1).toLong()).toInt()
                     val slice = payload.copyOfRange(start, end + 1)
                     Response.Builder()
