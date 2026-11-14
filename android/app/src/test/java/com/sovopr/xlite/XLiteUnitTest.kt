@@ -1,10 +1,25 @@
 package com.sovopr.xlite
 
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.net.Socket
+import java.net.URLEncoder
+import java.nio.file.Files
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 class XLiteUnitTest {
 
@@ -253,5 +268,213 @@ class XLiteUnitTest {
 
         val unsatisfiable = XLitePolicy.resolveCachedByteRange("bytes=2000000-", 2_000_000L)
         assertEquals(XLitePolicy.RangeResolution.Unsatisfiable(2_000_000L), unsatisfiable)
+    }
+
+    private data class RawHttpResponse(
+        val statusCode: Int,
+        val headers: Map<String, String>,
+        val body: ByteArray
+    )
+
+    private fun fetchLoopbackHttp(port: Int, pathAndQuery: String, rangeHeader: String? = null, maxBodyBytes: Int = Int.MAX_VALUE): RawHttpResponse {
+        Socket("127.0.0.1", port).use { socket ->
+            socket.soTimeout = 5000
+            val out = socket.getOutputStream()
+            val req = buildString {
+                append("GET ").append(pathAndQuery).append(" HTTP/1.1\r\n")
+                append("Host: 127.0.0.1:").append(port).append("\r\n")
+                if (rangeHeader != null) append("Range: ").append(rangeHeader).append("\r\n")
+                append("Connection: close\r\n\r\n")
+            }
+            out.write(req.toByteArray(Charsets.US_ASCII))
+            out.flush()
+
+            val input = socket.getInputStream().buffered()
+            val headerBytes = ByteArrayOutputStream()
+            var prev3 = 0
+            var prev2 = 0
+            var prev1 = 0
+            while (true) {
+                val b = input.read()
+                if (b < 0) break
+                headerBytes.write(b)
+                if (prev3 == '\r'.code && prev2 == '\n'.code && prev1 == '\r'.code && b == '\n'.code) break
+                prev3 = prev2
+                prev2 = prev1
+                prev1 = b
+            }
+            val headerLines = headerBytes.toString(Charsets.US_ASCII.name()).split("\r\n").filter { it.isNotEmpty() }
+            val statusCode = headerLines.firstOrNull()?.split(" ")?.getOrNull(1)?.toIntOrNull() ?: 0
+            val headers = mutableMapOf<String, String>()
+            for (line in headerLines.drop(1)) {
+                val idx = line.indexOf(':')
+                if (idx > 0) headers[line.substring(0, idx).trim().lowercase()] = line.substring(idx + 1).trim()
+            }
+
+            val bodyOut = ByteArrayOutputStream()
+            val buf = ByteArray(16384)
+            var total = 0
+            while (total < maxBodyBytes) {
+                val toRead = minOf(buf.size, maxBodyBytes - total)
+                val n = input.read(buf, 0, toRead)
+                if (n <= 0) break
+                bodyOut.write(buf, 0, n)
+                total += n
+            }
+            return RawHttpResponse(statusCode, headers, bodyOut.toByteArray())
+        }
+    }
+
+    private fun buildMockVideoClient(
+        payload: ByteArray,
+        upstreamHits: AtomicInteger,
+        failTail: AtomicBoolean
+    ): OkHttpClient {
+        val mediaType = "video/mp4".toMediaType()
+        return OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                val req = chain.request()
+                val reqRange = req.header("Range")
+                if (failTail.get() && reqRange != null && reqRange.startsWith("bytes=1048576-")) {
+                    return@addInterceptor Response.Builder()
+                        .request(req)
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(500)
+                        .message("Internal Server Error")
+                        .body(ByteArray(0).toResponseBody(mediaType))
+                        .build()
+                }
+                upstreamHits.incrementAndGet()
+                val range = XLitePolicy.parseByteRange(reqRange)
+                if (range != null) {
+                    val start = range.start.coerceIn(0L, (payload.size - 1).toLong()).toInt()
+                    val end = (range.end ?: (payload.size - 1).toLong())
+                        .coerceIn(start.toLong(), (payload.size - 1).toLong()).toInt()
+                    val slice = payload.copyOfRange(start, end + 1)
+                    Response.Builder()
+                        .request(req)
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(206)
+                        .message("Partial Content")
+                        .header("Content-Type", "video/mp4")
+                        .header("Accept-Ranges", "bytes")
+                        .header("Content-Range", "bytes $start-$end/${payload.size}")
+                        .header("Content-Length", slice.size.toString())
+                        .body(slice.toResponseBody(mediaType))
+                        .build()
+                } else {
+                    Response.Builder()
+                        .request(req)
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .header("Content-Type", "video/mp4")
+                        .header("Content-Length", payload.size.toString())
+                        .body(payload.toResponseBody(mediaType))
+                        .build()
+                }
+            }
+            .build()
+    }
+
+    @Test
+    fun testVideoProxyCommitsHeadOnEarlyAbortAndServesCachedRange() {
+        val tempRoot = Files.createTempDirectory("xlite_proxy_head").toFile()
+        val videosDir = File(tempRoot, "videos").apply { mkdirs() }
+        val staleTmp = File(videosDir, "orphan.head.tmp.12345").apply {
+            writeBytes(byteArrayOf(1, 2, 3))
+            setLastModified(System.currentTimeMillis() - 10_000L)
+        }
+        val payload = ByteArray(2_500_000) { ((it * 31) and 0xFF).toByte() }
+        val upstreamHits = AtomicInteger(0)
+        val failTail = AtomicBoolean(false)
+        val proxy = VideoStreamProxy(tempRoot, buildMockVideoClient(payload, upstreamHits, failTail))
+        try {
+            val port = proxy.getProxyPort()
+            assertTrue(port > 0)
+            val videoUrl = "https://video.twimg.com/ext_tw_video/999/pu/vid/clip.mp4"
+            val queryPath = "/vid?url=" + URLEncoder.encode(videoUrl, "UTF-8")
+
+            // Client reads past 1 MiB threshold then closes socket mid-stream (simulating Chromium seek/abort)
+            val early = fetchLoopbackHttp(port, queryPath, "bytes=0-", maxBodyBytes = 1_150_000)
+            assertEquals(206, early.statusCode)
+            assertEquals(1_150_000, early.body.size)
+
+            // Wait for background tee commit + startup stale tmp cleanup
+            val deadline = System.currentTimeMillis() + 3000L
+            while (System.currentTimeMillis() < deadline) {
+                val files = videosDir.listFiles().orEmpty()
+                val hasHead = files.any { it.name.endsWith(".head") && it.length() == 1_048_576L }
+                val hasMeta = files.any { it.name.endsWith(".meta") }
+                if (hasHead && hasMeta && !staleTmp.exists()) break
+                Thread.sleep(40L)
+            }
+            val filesAfter = videosDir.listFiles().orEmpty()
+            assertFalse("Stale tmp file should be purged on startup", staleTmp.exists())
+            assertTrue("1 MiB head file must be committed despite early disconnect", filesAfter.any { it.name.endsWith(".head") && it.length() == 1_048_576L })
+            assertTrue("Meta file must be committed alongside head", filesAfter.any { it.name.endsWith(".meta") })
+            assertFalse("No orphan tmp files should remain", filesAfter.any { it.name.contains(".tmp.") })
+
+            val hitsBeforeCacheRead = upstreamHits.get()
+            val cachedRange = fetchLoopbackHttp(port, queryPath, "bytes=0-65535")
+            assertEquals(206, cachedRange.statusCode)
+            assertArrayEquals(payload.copyOfRange(0, 65536), cachedRange.body)
+            assertEquals("Cached range <= 1 MiB must trigger zero upstream calls", hitsBeforeCacheRead, upstreamHits.get())
+        } finally {
+            proxy.closeForTesting()
+            tempRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun testVideoProxyTailFailureAndConcurrentBurst() {
+        val tempRoot = Files.createTempDirectory("xlite_proxy_burst").toFile()
+        val videosDir = File(tempRoot, "videos").apply { mkdirs() }
+        val payload = ByteArray(2_000_000) { ((it * 17) and 0xFF).toByte() }
+        val upstreamHits = AtomicInteger(0)
+        val failTail = AtomicBoolean(false)
+        val proxy = VideoStreamProxy(tempRoot, buildMockVideoClient(payload, upstreamHits, failTail))
+        val pool = Executors.newFixedThreadPool(16)
+        try {
+            val port = proxy.getProxyPort()
+            assertTrue(port > 0)
+            val videoUrl = "https://video.twimg.com/ext_tw_video/888/pu/vid/burst.mp4"
+            val queryPath = "/vid?url=" + URLEncoder.encode(videoUrl, "UTF-8")
+
+            proxy.prefetchHead(videoUrl)
+            val deadline = System.currentTimeMillis() + 3000L
+            while (System.currentTimeMillis() < deadline) {
+                val files = videosDir.listFiles().orEmpty()
+                if (files.any { it.name.endsWith(".head") } && files.any { it.name.endsWith(".meta") }) break
+                Thread.sleep(40L)
+            }
+            assertTrue(videosDir.listFiles().orEmpty().any { it.name.endsWith(".head") })
+
+            // Upstream tail error must truncate/abort socket before advertised 2 MB length
+            failTail.set(true)
+            val abortedTail = fetchLoopbackHttp(port, queryPath, "bytes=0-")
+            assertEquals(206, abortedTail.statusCode)
+            assertTrue("Truncated upstream tail must not pretend complete 2 MB body", abortedTail.body.size < payload.size)
+            assertEquals(1_048_576, abortedTail.body.size)
+
+            // 16 concurrent range fetches succeed without thread-pool 503 starvation
+            failTail.set(false)
+            val tasks = (0 until 16).map { idx ->
+                Callable {
+                    val start = idx * 65536
+                    val end = start + 65535
+                    val res = fetchLoopbackHttp(port, queryPath, "bytes=$start-$end")
+                    assertEquals(206, res.statusCode)
+                    assertArrayEquals(payload.copyOfRange(start, end + 1), res.body)
+                    true
+                }
+            }
+            val futures = pool.invokeAll(tasks)
+            for (f in futures) assertTrue(f.get())
+        } finally {
+            pool.shutdownNow()
+            proxy.closeForTesting()
+            tempRoot.deleteRecursively()
+        }
     }
 }

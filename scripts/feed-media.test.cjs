@@ -1697,6 +1697,371 @@ let txWarmChecksCompleted = false;
     scheduledTimers.forEach(t => { if (!t.cleared) t.fn(); });
 })();
 
+(() => {
+    // 3. Multi-hop stack (Offline cache -> Thread A -> Profile -> Thread B -> Back x3), Lightbox Back, and cache dirty flag on bookmark toggle
+    const stackEntries = [{ state: null, hash: '#feed' }];
+    let stackIdx = 0;
+    const observers = [];
+    const parkedCalls = { loads: 0 };
+    const bookmarkStore = {
+        bookmarks: JSON.stringify([
+            {
+                id: '500',
+                user_id: 'u500',
+                user_name: 'Offline',
+                user_screen_name: 'offline_dev',
+                time_ms: 1700000000000,
+                text: 'Offline saved post with image',
+                media: [{ type: 'photo', url: 'https://pbs.twimg.com/media/off500.jpg', width: 320, height: 240 }]
+            }
+        ])
+    };
+    const makeContainer = (id) => ({
+        id,
+        _html: '',
+        _appended: [],
+        _children: [],
+        style: {},
+        classList: { toggle() {}, add() {}, remove() {} },
+        get innerHTML() { return this._html; },
+        set innerHTML(v) { this._html = String(v || ''); this._appended = []; },
+        get firstChild() { return this._html ? { html: this._html } : null; },
+        appendChild(frag) {
+            if (frag && frag.firstChild) {
+                this._html = frag.firstChild.html || '';
+                frag.node = null;
+            }
+        },
+        insertAdjacentHTML(_pos, markup) {
+            this._appended.push(markup);
+            this._html += markup;
+        },
+        querySelector() { return null; },
+        querySelectorAll() { return []; },
+        getAttribute() { return null; }
+    });
+    const elMap = {
+        mainContent: makeContainer('mainContent'),
+        feedContainer: makeContainer('feedContainer'),
+        tabNav: makeContainer('tabNav'),
+        scrollTopBtn: makeContainer('scrollTopBtn'),
+        profileFeedBox: makeContainer('profileFeedBox'),
+        profileMoreWrap: { remove() { elMap.profileMoreWrap._removed = true; } },
+        searchResults: makeContainer('searchResults'),
+        searchLoadMoreBox: makeContainer('searchLoadMoreBox'),
+        mediaLightbox: makeContainer('mediaLightbox'),
+        lightboxImg: { classList: { remove() {}, toggle() {}, add() {} }, removeAttribute() {}, src: '' },
+        lightboxCounter: makeContainer('lightboxCounter'),
+        lightboxDots: makeContainer('lightboxDots')
+    };
+    const multiCtx = {
+        console,
+        URL,
+        setTimeout() { return 1; },
+        clearTimeout() {},
+        IntersectionObserver: class {
+            constructor(cb) { this.cb = cb; this.observed = []; observers.push(this); }
+            observe(el) { this.observed.push(el); }
+            disconnect() {}
+        },
+        document: {
+            getElementById(id) { return elMap[id] || null; },
+            querySelector(sel) {
+                if (sel === '#profileMoreBtn' || sel === '#profileMoreWrap') return elMap.profileMoreWrap;
+                return null;
+            },
+            querySelectorAll(sel) {
+                if (sel === '.nav-tab') return [makeContainer('t0'), makeContainer('t1'), makeContainer('t2')];
+                return [];
+            },
+            createDocumentFragment() {
+                return {
+                    node: null,
+                    get firstChild() { return this.node; },
+                    appendChild(n) { this.node = n; elMap.mainContent._html = ''; }
+                };
+            },
+            body: { classList: { toggle() {} } },
+            documentElement: { style: {}, clientHeight: 800, scrollHeight: 4000 }
+        },
+        AndroidBridge: {
+            getCache(k) { return bookmarkStore[k] || ''; },
+            saveCache(k, v) { bookmarkStore[k] = String(v ?? ''); }
+        },
+        localStorage: { getItem() { return null; }, setItem() {} },
+        location: { hash: '', pathname: '/index.html', search: '' },
+        scrollY: 420,
+        innerHeight: 800,
+        scrollTo(_x, y) { multiCtx.scrollY = y; },
+        addEventListener() {},
+        removeEventListener() {},
+        history: {
+            get state() { return stackEntries[stackIdx]?.state ?? null; },
+            pushState(s, _t, url) {
+                stackEntries.splice(stackIdx + 1);
+                stackEntries.push({ state: s, hash: url });
+                stackIdx = stackEntries.length - 1;
+            },
+            replaceState(s, _t, url) {
+                stackEntries[stackIdx] = { state: s, hash: url || stackEntries[stackIdx]?.hash };
+            },
+            back() {
+                if (stackIdx > 0) {
+                    stackIdx--;
+                    multiCtx.onpopstate({ state: stackEntries[stackIdx].state });
+                }
+            },
+            go(delta) {
+                const target = Math.max(0, Math.min(stackEntries.length - 1, stackIdx + delta));
+                stackIdx = target;
+                multiCtx.onpopstate({ state: stackEntries[stackIdx].state });
+            }
+        }
+    };
+    multiCtx.window = multiCtx;
+    vm.createContext(multiCtx);
+    vm.runInContext(script, multiCtx);
+    vm.runInContext(`
+        performAsyncGet = () => {};
+        performSignedGet = () => {};
+        currentTab = 'cache';
+        currentFeedOrigin = 'cache';
+        loadFeed('cache');
+    `, multiCtx);
+
+    // Lightbox open -> history.back() closes lightbox without altering viewHistoryStack
+    multiCtx.openLightbox('500', 0);
+    assert.ok(vm.runInContext('Boolean(lightboxState)', multiCtx), 'openLightbox populates lightboxState');
+    assert.equal(vm.runInContext('viewHistoryStack.length', multiCtx), 0, 'openLightbox must not push onto viewHistoryStack');
+    multiCtx.history.back();
+    assert.equal(vm.runInContext('lightboxState', multiCtx), null, 'history.back() closes lightbox');
+    assert.equal(vm.runInContext('currentView', multiCtx), 'feed', 'Closing lightbox keeps underlying feed active');
+
+    // Cache tab preserves DOM across Thread A -> Profile -> Thread B -> Back x3
+    let cacheLoads = 0;
+    const origLoadFeed = multiCtx.loadFeed;
+    multiCtx.loadFeed = (tab, append, preserve) => {
+        if (tab === 'cache' && !preserve) cacheLoads++;
+        return origLoadFeed(tab, append, preserve);
+    };
+    multiCtx.viewThread('500');
+    multiCtx.openProfile('bob');
+    vm.runInContext(`allTweetsMap['600'] = { id: '600', user_screen_name: 'bob', user_name: 'Bob', text: 'Bob tweet', media: [], likes: 1, retweets: 0, replies: 0 };`, multiCtx);
+    multiCtx.viewThread('600');
+    assert.equal(vm.runInContext('viewHistoryStack.length', multiCtx), 3, 'Three hops push three snapshots onto viewHistoryStack');
+
+    multiCtx.history.back();
+    assert.equal(vm.runInContext('currentView + ":" + profileState.screenName', multiCtx), 'profile:bob');
+    multiCtx.history.back();
+    assert.equal(vm.runInContext('currentView + ":" + activeThreadTweetId', multiCtx), 'thread:500');
+    multiCtx.history.back();
+    assert.equal(vm.runInContext('currentView + ":" + currentTab', multiCtx), 'feed:cache');
+    assert.equal(cacheLoads, 0, 'Returning to untouched cache tab restores saved DOM without calling loadFeed');
+
+    // Toggling bookmark marks cached Offline feed snapshot dirty if saved while leaving
+    multiCtx.viewThread('500');
+    multiCtx.toggleBookmark('500');
+    assert.equal(vm.runInContext('savedFeedCacheDirty', multiCtx), true, 'Bookmark change marks saved cache DOM dirty');
+    multiCtx.history.back();
+    assert.ok(cacheLoads >= 1, 'Dirty cache snapshot triggers fresh loadFeed("cache") on Back');
+})();
+
+(() => {
+    // 4. Video decoder parking (>4 away), restore on scroll back, plus Search & Profile page-2 append observers
+    const createdVideos = [];
+    for (let i = 0; i < 8; i++) {
+        const attrs = {
+            src: `http://127.0.0.1:49999/vid?url=${encodeURIComponent('https://video.twimg.com/v' + i + '.mp4')}`,
+            preload: i < 2 ? 'auto' : 'metadata'
+        };
+        const dataset = {
+            autoplay: '1',
+            fallbackSrc: `https://video.twimg.com/v${i}.mp4`,
+            directUrl: `https://video.twimg.com/v${i}.mp4`
+        };
+        createdVideos.push({
+            id: 'vid_' + i,
+            preload: attrs.preload,
+            readyState: i === 0 ? 2 : 0,
+            currentTime: 0,
+            paused: true,
+            ended: false,
+            muted: true,
+            dataset,
+            loads: 0,
+            plays: 0,
+            set src(v) { attrs.src = String(v); },
+            get src() { return attrs.src || ''; },
+            getAttribute(k) { return k in attrs ? attrs[k] : null; },
+            removeAttribute(k) { delete attrs[k]; },
+            load() { this.loads++; },
+            play() { this.plays++; this.paused = false; return Promise.resolve(); },
+            pause() { this.paused = true; },
+            getBoundingClientRect() { return { top: i * 500, bottom: i * 500 + 400 }; }
+        });
+    }
+    const ioInstances = [];
+    const mainBox = {
+        _inner: '<div id="feedContainer">videos</div>',
+        _wipedAfterInit: false,
+        get innerHTML() { return this._inner; },
+        set innerHTML(v) { this._inner = v; this._wipedAfterInit = true; },
+        querySelectorAll(sel) {
+            if (sel === 'video.tweet-video') return createdVideos;
+            return [];
+        }
+    };
+    const profileBox = {
+        _inner: '<div class="tweet" data-id="p1">p1</div>',
+        _appended: '',
+        get innerHTML() { return this._inner; },
+        set innerHTML(v) { this._inner = v; },
+        insertAdjacentHTML(_pos, h) { this._appended += h; this._inner += h; },
+        querySelectorAll(sel) { return sel === 'video.tweet-video' ? [createdVideos[6]] : []; }
+    };
+    const searchBox = {
+        _inner: '<div class="tweet" data-id="s1">s1</div>',
+        _appended: '',
+        insertAdjacentHTML(_pos, h) { this._appended += h; this._inner += h; },
+        querySelectorAll(sel) { return sel === 'video.tweet-video' ? [createdVideos[7]] : []; }
+    };
+    const searchMoreBox = { innerHTML: '' };
+    let pendingSearchCbId = null;
+    const vidCtx = {
+        console,
+        URL,
+        setTimeout() { return 1; },
+        clearTimeout() {},
+        IntersectionObserver: class {
+            constructor(cb, opts) { this.cb = cb; this.opts = opts; this.observed = []; ioInstances.push(this); }
+            observe(el) { this.observed.push(el); }
+            disconnect() {}
+        },
+        document: {
+            hidden: false,
+            getElementById(id) {
+                if (id === 'mainContent') return mainBox;
+                if (id === 'profileFeedBox') return profileBox;
+                if (id === 'profileMoreWrap') return { remove() {} };
+                if (id === 'searchResults') return searchBox;
+                if (id === 'searchLoadMoreBox') return searchMoreBox;
+                return null;
+            },
+            querySelector() { return null; },
+            querySelectorAll() { return []; }
+        },
+        AndroidBridge: {
+            getCache() { return ''; },
+            saveCache() {},
+            getVideoProxyPort() { return 49999; },
+            executeSearchGetAsync(_url, _tid, cbId) { pendingSearchCbId = cbId; },
+            executePostAsync(_url, _body, cbId) { pendingSearchCbId = cbId; }
+        },
+        localStorage: { getItem() { return null; }, setItem() {} },
+        location: { hash: '' },
+        addEventListener() {}
+    };
+    vidCtx.window = vidCtx;
+    vm.createContext(vidCtx);
+    vm.runInContext(script, vidCtx);
+
+    vidCtx.initVideoAutoPauseObserver(mainBox);
+    const pauseObs = ioInstances.find(o => !o.opts?.rootMargin);
+    const preloadObs = ioInstances.find(o => o.opts?.rootMargin === '700px 0px');
+    assert.ok(pauseObs && preloadObs, 'Both auto-pause and preload observers created');
+    assert.equal(createdVideos[0].dataset.xliteObserved, '1', 'Observed video stamped with dataset.xliteObserved');
+
+    // Scrolling to v7 (distance 7 > 4) parks untouched v0 and increments v0.load() to free decoder
+    pauseObs.cb([{ target: createdVideos[7], isIntersecting: true }]);
+    assert.equal(createdVideos[0].preload, 'none', 'Distant untouched video sets preload=none');
+    assert.ok(createdVideos[0].dataset.xliteParkedSrc, 'Distant untouched video records xliteParkedSrc');
+    assert.equal(createdVideos[0].getAttribute('src'), null, 'Distant untouched video removes src attribute');
+    assert.equal(createdVideos[0].loads, 1, 'Distant untouched video calls load() to release MediaCodec decoder');
+
+    // Phantom error while parked must not invoke fallback URL
+    const parkedUrl = createdVideos[0].dataset.xliteParkedSrc;
+    vidCtx.fallbackVideoSource(createdVideos[0]);
+    assert.equal(createdVideos[0].dataset.xliteParkedSrc, parkedUrl, 'fallbackVideoSource ignores parked videos');
+    assert.equal(createdVideos[0].getAttribute('src'), null, 'fallbackVideoSource leaves parked src unset');
+
+    // Scrolling back into range restores parked src
+    preloadObs.cb([{ target: createdVideos[0], isIntersecting: true }]);
+    assert.equal(createdVideos[0].dataset.xliteParkedSrc, undefined, 'Restoring clears xliteParkedSrc');
+    assert.equal(createdVideos[0].getAttribute('src'), parkedUrl, 'Restoring sets src back to original proxy URL');
+
+    // fetchProfileTimeline append-only paging preserves mainContent DOM and observes new page video
+    let signedCb = null;
+    vidCtx.performSignedGet = (_path, cb) => { signedCb = cb; };
+    vm.runInContext(`
+        currentView = 'profile';
+        appConfig.image_mode = 'auto';
+        profileState = { screenName: 'alice', tab: 'tweets', user: { id: 'u1', screen_name: 'alice' }, tweets: [], cursor: 'c1', loading: false, loadingMore: true, error: '' };
+    `, vidCtx);
+    mainBox._wipedAfterInit = false;
+    const genNow = vm.runInContext('viewGeneration', vidCtx);
+    vidCtx.fetchProfileTimeline(genNow, true);
+    const p2Entry = {
+        entryId: 'tweet-p2',
+        sortIndex: '10',
+        content: {
+            entryType: 'TimelineTimelineItem',
+            itemContent: {
+                itemType: 'TimelineTweet',
+                tweet_results: {
+                    result: {
+                        __typename: 'Tweet',
+                        rest_id: 'p2',
+                        core: { user_results: { result: { __typename: 'User', rest_id: 'u1', core: { name: 'A', screen_name: 'alice' }, legacy: { name: 'A', screen_name: 'alice' } } } },
+                        legacy: { id_str: 'p2', full_text: 'Profile p2', created_at: 'Fri Nov 14 10:00:00 +0000 2026' }
+                    }
+                }
+            }
+        }
+    };
+    signedCb(JSON.stringify({
+        data: { user: { result: { timeline_v2: { timeline: { instructions: [{ type: 'TimelineAddEntries', entries: [p2Entry] }] } } } } }
+    }));
+    assert.equal(mainBox._wipedAfterInit, false, 'Profile paging never wipes #mainContent.innerHTML');
+    assert.match(profileBox._appended, /data-id="p2"/, 'Profile paging appends p2 via insertAdjacentHTML');
+    assert.equal(createdVideos[6].dataset.xliteObserved, '1', 'Profile paging re-runs video observer on #profileFeedBox');
+
+    // fetchSearchPage page 2 attaches video observer to searchResults
+    vm.runInContext(`
+        currentView = 'search';
+        searchState = { query: 'q', cursor: 'sc2', usedCursors: new Set(), seenIds: new Set(['s1']), queryId: null, loading: false };
+        searchTransactionClient = { generateTransactionId: () => 't' };
+        searchTransactionFetchedAt = Date.now();
+    `, vidCtx);
+    const sGen = vm.runInContext('viewGeneration', vidCtx);
+    createdVideos[7].dataset.xliteObserved = '';
+    pendingSearchCbId = null;
+    vidCtx.fetchSearchPage(sGen, 'sc2');
+    assert.ok(pendingSearchCbId, 'fetchSearchPage dispatches search bridge request');
+    const s2Entry = {
+        entryId: 'tweet-s2',
+        sortIndex: '10',
+        content: {
+            entryType: 'TimelineTimelineItem',
+            itemContent: {
+                itemType: 'TimelineTweet',
+                tweet_results: {
+                    result: {
+                        __typename: 'Tweet',
+                        rest_id: 's2',
+                        core: { user_results: { result: { __typename: 'User', rest_id: 'u2', core: { name: 'B', screen_name: 'bob' }, legacy: { name: 'B', screen_name: 'bob' } } } },
+                        legacy: { id_str: 's2', full_text: 'Search p2', created_at: 'Fri Nov 14 10:00:00 +0000 2026' }
+                    }
+                }
+            }
+        }
+    };
+    vidCtx.__onAsyncFinish(pendingSearchCbId, JSON.stringify({
+        data: { search_by_raw_query: { search_timeline: { timeline: { instructions: [{ type: 'TimelineAddEntries', entries: [s2Entry] }] } } } }
+    }));
+    assert.match(searchBox._appended, /data-id="s2"/, 'Search paging appends s2 into #searchResults');
+    assert.equal(createdVideos[7].dataset.xliteObserved, '1', 'Search paging observes new videos on #searchResults');
+})();
+
 process.on('beforeExit', () => {
     assert.equal(txWarmChecksCompleted, true, 'Async warm ClientTransaction checks must finish completely');
 });

@@ -11,10 +11,10 @@ android {
         applicationId = "com.sovopr.xlite"
         minSdk = 24
         targetSdk = 34
-        val appVersion = (System.getenv("XLITE_VERSION") ?: "1.0.32").removePrefix("v")
+        val appVersion = (System.getenv("XLITE_VERSION") ?: "1.0.33").removePrefix("v")
         versionName = appVersion
         val envCode = System.getenv("XLITE_VERSION_CODE")?.toIntOrNull()
-        versionCode = if (envCode != null && envCode > 28) envCode else 28
+        versionCode = if (envCode != null && envCode > 29) envCode else 29
         val gitSha = (System.getenv("XLITE_GIT_SHA") ?: "local").take(7)
         buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
