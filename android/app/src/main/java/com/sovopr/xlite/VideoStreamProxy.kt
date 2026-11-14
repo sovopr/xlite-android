@@ -16,8 +16,8 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.RejectedExecutionException
-import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
@@ -30,7 +30,11 @@ import java.util.concurrent.atomic.AtomicInteger
  * WebViewClient.shouldInterceptRequest, bypassing Chromium's AndroidStreamReaderURLLoader
  * Range double-skipping bug while preserving HTTP/2 pooling and 1 MB instant head prebuffering.
  */
-internal class VideoStreamProxy(private val context: Context) {
+internal class VideoStreamProxy internal constructor(
+    cacheRootDir: File,
+    private val customClient: OkHttpClient? = null
+) {
+    constructor(context: Context) : this(context.cacheDir, null)
 
     companion object {
         private const val HEAD_PREFETCH_BYTES = 1024L * 1024L
@@ -54,13 +58,15 @@ internal class VideoStreamProxy(private val context: Context) {
         }
 
         private val connectionExecutor = ThreadPoolExecutor(
-            2,
-            24,
+            16,
+            32,
             30L,
             TimeUnit.SECONDS,
-            SynchronousQueue(),
+            LinkedBlockingQueue(128),
             daemonFactory
-        )
+        ).apply {
+            allowCoreThreadTimeOut(true)
+        }
 
         private val prefetchExecutor = Executors.newFixedThreadPool(2, daemonFactory)
         private val cacheTrimExecutor = Executors.newSingleThreadExecutor(daemonFactory)
@@ -77,8 +83,16 @@ internal class VideoStreamProxy(private val context: Context) {
         }
     }
 
-    private val videoCacheDir = File(context.cacheDir, "videos").apply {
+    private val effectiveClient: OkHttpClient
+        get() = customClient ?: videoClient
+
+    private val videoCacheDir = File(cacheRootDir, "videos").apply {
         if (!exists()) mkdirs()
+    }
+
+    init {
+        val initCutoffMs = System.currentTimeMillis() - 1_000L
+        cacheTrimExecutor.execute { purgeStaleTmpFiles(initCutoffMs) }
     }
 
     private val serverLock = Any()
@@ -119,6 +133,14 @@ internal class VideoStreamProxy(private val context: Context) {
                 serverSocket = null
                 0
             }
+        }
+    }
+
+    internal fun closeForTesting() {
+        synchronized(serverLock) {
+            closeQuietly(serverSocket)
+            serverSocket = null
+            boundPort = 0
         }
     }
 
@@ -334,20 +356,26 @@ internal class VideoStreamProxy(private val context: Context) {
             .header("User-Agent", TwitterBridge.USER_AGENT)
             .header("Range", "bytes=$tailStart-$end")
             .build()
-        val call = videoClient.newCall(request)
+        val call = effectiveClient.newCall(request)
         try {
             call.execute().use { resp ->
-                if (!resp.isSuccessful && resp.code != 206) return
-                val body = resp.body ?: return
+                if (!resp.isSuccessful && resp.code != 206) {
+                    throw IOException("Upstream tail HTTP ${resp.code}")
+                }
+                val body = resp.body ?: throw IOException("Upstream tail empty body")
                 val stream = body.byteStream()
                 if (resp.code == 200) {
-                    if (!skipBytesExact(stream, tailStart)) return
+                    if (!skipBytesExact(stream, tailStart)) {
+                        throw IOException("Upstream tail EOF while skipping to $tailStart")
+                    }
                 } else {
                     val upstreamRangeStart = parseRangeStart(resp.header("Content-Range"))
                     if (upstreamRangeStart != null && upstreamRangeStart < tailStart) {
-                        if (!skipBytesExact(stream, tailStart - upstreamRangeStart)) return
+                        if (!skipBytesExact(stream, tailStart - upstreamRangeStart)) {
+                            throw IOException("Upstream tail EOF while aligning range to $tailStart")
+                        }
                     } else if (upstreamRangeStart != null && upstreamRangeStart > tailStart) {
-                        return
+                        throw IOException("Upstream returned start $upstreamRangeStart past requested $tailStart")
                     }
                 }
                 copyUpTo(stream, out, bytesWanted)
@@ -378,7 +406,7 @@ internal class VideoStreamProxy(private val context: Context) {
         }
         if (method == "HEAD") reqBuilder.head() else reqBuilder.get()
 
-        val call = videoClient.newCall(reqBuilder.build())
+        val call = effectiveClient.newCall(reqBuilder.build())
         try {
             call.execute().use { resp ->
                 val code = resp.code
@@ -449,12 +477,12 @@ internal class VideoStreamProxy(private val context: Context) {
         contentType: String
     ) {
         val targetHeadBytes = minOf(HEAD_PREFETCH_BYTES, totalLen)
-        val headTmp = File(videoCacheDir, "$hash.head.tmp")
-        val metaTmp = File(videoCacheDir, "$hash.meta.tmp")
-        val headFile = File(videoCacheDir, "$hash.head")
-        val metaFile = File(videoCacheDir, "$hash.meta")
+        val suffix = System.nanoTime()
+        val headTmp = File(videoCacheDir, "$hash.head.tmp.$suffix")
+        val metaTmp = File(videoCacheDir, "$hash.meta.tmp.$suffix")
         var headOut: FileOutputStream? = null
         var teed = 0L
+        var lockReleased = false
 
         try {
             headOut = FileOutputStream(headTmp)
@@ -468,26 +496,28 @@ internal class VideoStreamProxy(private val context: Context) {
                     headOut.write(buf, 0, toTee)
                     teed += toTee
                     if (teed >= targetHeadBytes) {
+                        headOut.flush()
                         headOut.close()
                         headOut = null
+                        // Persist head immediately so subsequent seek/abort does not discard 1 MB.
+                        if (commitHeadCacheFiles(hash, headTmp, metaTmp, targetHeadBytes, totalLen, contentType)) {
+                            inFlightPrefetches.remove(hash)
+                            lockReleased = true
+                        }
                     }
                 }
             }
             out.flush()
-            if (teed == targetHeadBytes && headTmp.length() == targetHeadBytes) {
-                metaTmp.writeText("$totalLen\n$contentType", Charsets.UTF_8)
-                headFile.delete()
-                if (headTmp.renameTo(headFile)) {
-                    metaFile.delete()
-                    metaTmp.renameTo(metaFile)
-                    scheduleDiskTrim()
-                }
+            if (!lockReleased && teed == targetHeadBytes) {
+                commitHeadCacheFiles(hash, headTmp, metaTmp, targetHeadBytes, totalLen, contentType)
             }
         } finally {
             closeQuietly(headOut)
             headTmp.delete()
             metaTmp.delete()
-            inFlightPrefetches.remove(hash)
+            if (!lockReleased) {
+                inFlightPrefetches.remove(hash)
+            }
         }
     }
 
@@ -500,15 +530,16 @@ internal class VideoStreamProxy(private val context: Context) {
         if (inFlightPrefetches.putIfAbsent(hash, true) != null) return
 
         prefetchExecutor.execute {
-            val headTmp = File(videoCacheDir, "$hash.head.tmp")
-            val metaTmp = File(videoCacheDir, "$hash.meta.tmp")
+            val suffix = System.nanoTime()
+            val headTmp = File(videoCacheDir, "$hash.head.tmp.$suffix")
+            val metaTmp = File(videoCacheDir, "$hash.meta.tmp.$suffix")
             try {
                 val request = Request.Builder()
                     .url(rawUrl)
                     .header("User-Agent", TwitterBridge.USER_AGENT)
                     .header("Range", "bytes=0-${HEAD_PREFETCH_BYTES - 1L}")
                     .build()
-                videoClient.newCall(request).execute().use { resp ->
+                effectiveClient.newCall(request).execute().use { resp ->
                     if (!resp.isSuccessful && resp.code != 206) return@execute
                     val body = resp.body ?: return@execute
                     val contentType = sanitizeVideoMime(resp.header("Content-Type"))
@@ -531,15 +562,7 @@ internal class VideoStreamProxy(private val context: Context) {
                     }
 
                     val expectedHeadBytes = minOf(HEAD_PREFETCH_BYTES, totalLen)
-                    if (headTmp.length() == expectedHeadBytes && headTmp.length() > 0L) {
-                        metaTmp.writeText("$totalLen\n$contentType", Charsets.UTF_8)
-                        headFile.delete()
-                        if (headTmp.renameTo(headFile)) {
-                            metaFile.delete()
-                            metaTmp.renameTo(metaFile)
-                            scheduleDiskTrim()
-                        }
-                    }
+                    commitHeadCacheFiles(hash, headTmp, metaTmp, expectedHeadBytes, totalLen, contentType)
                 }
             } catch (_: Exception) {
             } finally {
@@ -548,6 +571,39 @@ internal class VideoStreamProxy(private val context: Context) {
                 inFlightPrefetches.remove(hash)
             }
         }
+    }
+
+    private fun commitHeadCacheFiles(
+        hash: String,
+        headTmp: File,
+        metaTmp: File,
+        expectedHeadBytes: Long,
+        totalLen: Long,
+        contentType: String
+    ): Boolean {
+        if (expectedHeadBytes <= 0L || headTmp.length() != expectedHeadBytes) return false
+        val headFile = File(videoCacheDir, "$hash.head")
+        val metaFile = File(videoCacheDir, "$hash.meta")
+        metaTmp.writeText("$totalLen\n$contentType", Charsets.UTF_8)
+        headFile.delete()
+        if (!headTmp.renameTo(headFile)) return false
+        metaFile.delete()
+        if (!metaTmp.renameTo(metaFile)) {
+            headFile.delete()
+            return false
+        }
+        scheduleDiskTrim()
+        return true
+    }
+
+    private fun purgeStaleTmpFiles(cutoffMs: Long) {
+        try {
+            videoCacheDir.listFiles()?.forEach { f ->
+                if (f.isFile && f.name.contains(".tmp") && f.lastModified() < cutoffMs) {
+                    f.delete()
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     private fun readCachedMeta(hash: String): CachedMeta? {
@@ -580,14 +636,7 @@ internal class VideoStreamProxy(private val context: Context) {
     private fun trimDiskCacheIfNeeded() {
         try {
             val now = System.currentTimeMillis()
-            val allFiles = videoCacheDir.listFiles() ?: return
-            for (f in allFiles) {
-                if ((f.name.endsWith(".head.tmp") || f.name.endsWith(".meta.tmp")) &&
-                    now - f.lastModified() > TMP_STALE_MS
-                ) {
-                    f.delete()
-                }
-            }
+            purgeStaleTmpFiles(now - TMP_STALE_MS)
 
             val committedHeads = videoCacheDir.listFiles()
                 ?.filter { it.isFile && it.name.endsWith(".head") }

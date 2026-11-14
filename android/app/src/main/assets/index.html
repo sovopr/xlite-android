@@ -644,6 +644,8 @@ body.rich-mode .tweet-avatar.mini {
 .tweet-video {
   display: block;
   width: 100%;
+  aspect-ratio: 16 / 9;
+  height: auto;
   max-height: 520px;
   background: #000;
   object-fit: contain;
@@ -681,9 +683,11 @@ body.rich-mode .tweet-avatar.mini {
 }
 .link-card-img {
   width: 100%;
+  aspect-ratio: 16 / 9;
   max-height: 200px;
   object-fit: cover;
   display: block;
+  background: #16181c;
   border-bottom: 1px solid var(--border);
 }
 .link-card-body { padding: 10px 12px; }
@@ -1950,9 +1954,9 @@ let isFetching = false;
 let pendingCallbacks = {};
 const pendingActionLocks = {};
 const activeImageLoads = new Set();
-const APP_VERSION = '1.0.32';
-const APP_BUILD = '2026.11.14.1';
-const LATEST_APK_VERSION = '1.0.32';
+const APP_VERSION = '1.0.33';
+const APP_BUILD = '2026.11.14.2';
+const LATEST_APK_VERSION = '1.0.33';
 const LATEST_APK_URL = 'https://github.com/sovopr/xlite-android/releases/latest/download/xlite-fup-release.apk';
 const LATEST_APK_SHA256 = '';
 let activeApkDownloadState = null;
@@ -1986,7 +1990,17 @@ let savedFeedNodes = null;
 let savedFeedScrollY = 0;
 let savedFeedAnchor = null;
 let savedFeedTab = '';
+let savedFeedTweetsList = [];
+let savedFeedCacheDirty = false;
 let savedFeedRequestInterrupted = false;
+let viewHistoryStack = [];
+let navStackSeq = 0;
+let currentStackDepth = 0;
+let activeHistoryPushes = 0;
+let lightboxHistoryPushed = false;
+let ignoreNextLightboxPopstate = false;
+let skipNextFeedRootPopstate = false;
+let hasRenderedNavView = false;
 let activeScrollRestoreToken = 0;
 let activeScrollRestoreCancel = null;
 let viewerIdentity = null;
@@ -2000,6 +2014,25 @@ let savedNotifScrollY = 0;
 let savedNotifAnchor = null;
 let composeQuoteTweetId = null;
 let lightboxState = null;
+
+function invalidateSavedFeed() {
+    savedFeedMarkup = '';
+    savedFeedNodes = null;
+    savedFeedAnchor = null;
+    savedFeedTweetsList = [];
+    savedFeedCacheDirty = false;
+    savedFeedRequestInterrupted = false;
+    if (Array.isArray(viewHistoryStack)) {
+        viewHistoryStack.forEach(frame => {
+            if (frame && frame.view === 'feed') {
+                frame.nodes = null;
+                frame.markup = '';
+                frame.anchor = null;
+                frame.tweetsList = [];
+            }
+        });
+    }
+}
 let seenForYouIds = new Set();
 let pendingSeenTweetIds = [];
 const pendingSeenSet = new Set();
@@ -2202,10 +2235,7 @@ function saveImageModePref(mode, opts = {}) {
     appConfig.image_mode = normalized;
     syncRichBodyClass();
     if (typeof cancelPendingScrollRestore === 'function') cancelPendingScrollRestore();
-    savedFeedMarkup = '';
-    savedFeedNodes = null;
-    savedFeedAnchor = null;
-    savedFeedRequestInterrupted = false;
+    invalidateSavedFeed();
     updateHeaderActions();
     return normalized;
 }
@@ -2877,28 +2907,58 @@ function initVideoAutoPauseObserver(rootEl) {
     const videos = Array.from(container.querySelectorAll('video.tweet-video'));
     if (!videos.length) return;
     prefetchUpcomingVideos(container, 3);
-    videos.forEach(attachVideoBufferingMonitor);
+    videos.forEach((v) => {
+        if (v && v.dataset) v.dataset.xliteObserved = '1';
+        attachVideoBufferingMonitor(v);
+    });
     if (typeof IntersectionObserver !== 'function') return;
 
-    let activeAutoPreloads = 0;
+    const restoreParkedVideo = (vid) => {
+        if (!vid || !vid.dataset || !vid.dataset.xliteParkedSrc) return;
+        const savedSrc = vid.dataset.xliteParkedSrc;
+        delete vid.dataset.xliteParkedSrc;
+        vid.preload = 'metadata';
+        try {
+            if (typeof vid.setAttribute === 'function') vid.setAttribute('src', savedSrc);
+            else vid.src = savedSrc;
+        } catch (_) {}
+    };
+
+    const reclaimDistantVideos = (centerIdx) => {
+        videos.forEach((v, i) => {
+            if (!v || Math.abs(i - centerIdx) <= 2) return;
+            clearVideoStallTimer(v);
+            if (!v.paused) return;
+            if (v.preload === 'auto') v.preload = 'metadata';
+            if (Math.abs(i - centerIdx) > 4 && Number(v.currentTime || 0) === 0 && !v.dataset?.xliteParkedSrc && Number(v.readyState || 0) > 0) {
+                const activeSrc = v.currentSrc || (typeof v.getAttribute === 'function' ? v.getAttribute('src') : v.src) || '';
+                if (activeSrc && !activeSrc.startsWith('data:')) {
+                    v.dataset.xliteParkedSrc = activeSrc;
+                    v.preload = 'none';
+                    try {
+                        if (typeof v.removeAttribute === 'function') v.removeAttribute('src');
+                        else v.src = '';
+                        if (typeof v.load === 'function') v.load();
+                    } catch (_) {}
+                }
+            }
+        });
+    };
+
     const MAX_AUTO_PRELOADS = 2;
     // Prebuffer opening MP4 chunks ahead of viewport while capping concurrent MediaCodec decoders.
     videoPreloadObserver = new IntersectionObserver((entries) => {
         entries.forEach((entry) => {
             if (!entry.isIntersecting) return;
             const vid = entry.target;
+            restoreParkedVideo(vid);
             if (vid.dataset?.prefetchUrl) requestNativeVideoPrefetch(vid.dataset.prefetchUrl);
             if (vid.preload !== 'auto') {
-                if (activeAutoPreloads < MAX_AUTO_PRELOADS) {
-                    vid.preload = 'auto';
-                    activeAutoPreloads++;
-                } else {
-                    vid.preload = 'metadata';
-                }
+                const activeAutos = videos.filter(v => v && v.preload === 'auto').length;
+                vid.preload = activeAutos < MAX_AUTO_PRELOADS ? 'auto' : 'metadata';
             }
-            try { videoPreloadObserver.unobserve(vid); } catch (_) {}
         });
-    }, { rootMargin: '900px 0px', threshold: [0.01] });
+    }, { rootMargin: '700px 0px', threshold: [0.01] });
 
     videoAutoPauseObserver = new IntersectionObserver((entries) => {
         entries.forEach((entry) => {
@@ -2907,10 +2967,13 @@ function initVideoAutoPauseObserver(rootEl) {
                 clearVideoStallTimer(vid);
                 try { vid.pause(); } catch (_) {}
             } else {
+                restoreParkedVideo(vid);
                 const idx = videos.indexOf(vid);
                 if (idx >= 0) {
+                    reclaimDistantVideos(idx);
                     for (let next = idx + 1; next <= Math.min(videos.length - 1, idx + 2); next++) {
                         const nxt = videos[next];
+                        restoreParkedVideo(nxt);
                         if (nxt?.dataset?.prefetchUrl) requestNativeVideoPrefetch(nxt.dataset.prefetchUrl);
                         if (next === idx + 1 && nxt && nxt.preload !== 'auto') nxt.preload = 'auto';
                     }
@@ -3385,20 +3448,204 @@ function disconnectFeedAutoLoader() {
     }
 }
 
-function nav(view) {
+function syncChromeForView(view) {
+    syncInFeedBodyClass();
+    pullRefreshState.armed = false;
+    pullRefreshState.pulling = false;
+    pullRefreshState.refreshing = false;
+    setPullIndicator('idle');
+    const bottomTabs = ['feed', 'search', 'post', 'settings'];
+    if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
+        document.querySelectorAll('.bottom-item').forEach((el, idx) => {
+            el.classList.toggle('active', bottomTabs[idx] === view);
+        });
+    }
+    const tabNav = typeof document !== 'undefined' ? document.getElementById('tabNav') : null;
+    if (tabNav && tabNav.style) tabNav.style.display = (view === 'feed') ? 'flex' : 'none';
+    updateHeaderActions();
+    updateScrollTopButton();
+}
+
+function captureMainNodes(container) {
+    if (!container || typeof document === 'undefined' || typeof document.createDocumentFragment !== 'function' || typeof container.appendChild !== 'function') {
+        return null;
+    }
+    const frag = document.createDocumentFragment();
+    while (container.firstChild) frag.appendChild(container.firstChild);
+    return frag;
+}
+
+function captureCurrentViewSnapshot(tweetIdHint = null) {
+    const mainContainer = typeof document !== 'undefined' ? document.getElementById('mainContent') : null;
+    const capturedScrollY = getCurrentScrollY();
+    const anchor = mainContainer ? captureViewAnchor(mainContainer, tweetIdHint, capturedScrollY) : null;
+    const searchInputEl = typeof document !== 'undefined' ? document.getElementById('searchInput') : null;
+    const frame = {
+        depth: currentStackDepth,
+        view: currentView,
+        scrollY: capturedScrollY,
+        anchor,
+        markup: mainContainer ? (mainContainer.innerHTML || '') : '',
+        nodes: null,
+        tab: currentTab,
+        originView: threadOriginView,
+        originTab: currentFeedOrigin || currentTab,
+        threadTweetId: activeThreadTweetId,
+        tweetsList: Array.isArray(currentTweetsList) ? currentTweetsList.slice() : [],
+        searchStateSnapshot: searchState,
+        searchInputValue: searchInputEl ? searchInputEl.value : lastSearchQuery,
+        profileStateSnapshot: profileState
+    };
+
+    if (currentView === 'feed') {
+        saveSeenForYouIds();
+        flushSeenLinger(false);
+        flushSeenToHomeTimeline(false);
+        prebufferedNextPage.foryou = null;
+        prebufferedNextPage.following = null;
+        const interrupted = !!(isFetching && isFetching.startsWith(currentTab + ':' + viewGeneration + ':'));
+        if (interrupted) isFetching = false;
+        disconnectSeenObserver();
+        disconnectFeedAutoLoader();
+        pauseAllFeedVideos();
+        savedFeedScrollY = capturedScrollY;
+        savedFeedAnchor = anchor;
+        savedFeedTab = currentTab;
+        savedFeedRequestInterrupted = interrupted;
+        savedFeedTweetsList = frame.tweetsList.slice();
+        savedFeedMarkup = frame.markup;
+        savedFeedNodes = captureMainNodes(mainContainer);
+        frame.nodes = savedFeedNodes;
+        frame.requestInterrupted = interrupted;
+    } else if (currentView === 'search') {
+        if (searchState && searchState.loading) {
+            searchState.loading = false;
+            if (searchState.cursor) renderSearchLoadMore('Search was interrupted. Retry to continue.');
+            else {
+                const resEl = document.getElementById('searchResults');
+                const btnEl = document.getElementById('searchBtn');
+                if (resEl) resEl.innerHTML = '<div class="card"><p class="card-desc">Search was interrupted. Search again to retry.</p></div>';
+                if (btnEl) btnEl.disabled = false;
+            }
+            frame.markup = mainContainer ? (mainContainer.innerHTML || '') : '';
+        }
+        pauseAllFeedVideos();
+        savedSearchScrollY = capturedScrollY;
+        savedSearchAnchor = anchor;
+        savedSearchMarkup = frame.markup;
+        frame.nodes = captureMainNodes(mainContainer);
+    } else if (currentView === 'profile') {
+        pauseAllFeedVideos();
+        savedProfileScrollY = capturedScrollY;
+        savedProfileAnchor = anchor;
+        savedProfileMarkup = frame.markup;
+        frame.nodes = captureMainNodes(mainContainer);
+    } else if (currentView === 'notifications') {
+        savedNotifScrollY = capturedScrollY;
+        savedNotifAnchor = anchor;
+        savedNotifMarkup = frame.markup;
+        frame.nodes = captureMainNodes(mainContainer);
+    } else if (currentView === 'thread') {
+        pauseAllFeedVideos();
+        frame.nodes = captureMainNodes(mainContainer);
+    }
+    return frame;
+}
+
+function pushHistorySnapshot(nextView, statePayload = {}, hashStr = '', tweetIdHint = null) {
+    const frame = captureCurrentViewSnapshot(tweetIdHint);
+    viewHistoryStack.push(frame);
+    if (viewHistoryStack.length > 12) viewHistoryStack.shift();
+    currentStackDepth = ++navStackSeq;
+    if (typeof history !== 'undefined' && typeof history.pushState === 'function') {
+        try {
+            const basePath = (typeof window !== 'undefined' && window.location)
+                ? ((window.location.pathname || '') + (window.location.search || ''))
+                : '';
+            const targetUrl = hashStr ? (basePath + hashStr) : (basePath + '#' + nextView);
+            history.pushState({ view: nextView, stackDepth: currentStackDepth, ...statePayload }, '', targetUrl);
+            activeHistoryPushes++;
+        } catch (_) {}
+    }
+}
+
+function restoreViewSnapshot(frame) {
+    if (!frame) return false;
     if (typeof cancelPendingScrollRestore === 'function') cancelPendingScrollRestore();
-    if (typeof closeLightbox === 'function' && lightboxState) closeLightbox();
+    currentStackDepth = Number(frame.depth) || 0;
+    if (frame.view === 'feed') {
+        if (!savedFeedNodes) {
+            savedFeedNodes = frame.nodes || null;
+            savedFeedMarkup = frame.markup || savedFeedMarkup;
+            if (savedFeedScrollY === 0 && frame.scrollY) savedFeedScrollY = frame.scrollY;
+            if (!savedFeedAnchor && frame.anchor) savedFeedAnchor = frame.anchor;
+            savedFeedTab = frame.tab || savedFeedTab || currentTab;
+            if (!savedFeedTweetsList.length && Array.isArray(frame.tweetsList)) {
+                savedFeedTweetsList = frame.tweetsList.slice();
+            }
+        }
+        restoreFeedView(frame.tab || currentFeedOrigin || currentTab, true);
+        return true;
+    }
+
+    activeThreadTweetId = frame.view === 'thread' ? (frame.threadTweetId || null) : null;
+    threadOriginView = frame.originView || threadOriginView;
+    currentView = frame.view;
+    viewGeneration++;
+    if (frame.view === 'search') {
+        searchState = frame.searchStateSnapshot || searchState;
+        savedSearchMarkup = '';
+        savedSearchAnchor = null;
+    } else if (frame.view === 'profile') {
+        profileState = frame.profileStateSnapshot || profileState;
+        savedProfileMarkup = '';
+        savedProfileAnchor = null;
+    } else if (frame.view === 'notifications') {
+        savedNotifMarkup = '';
+        savedNotifAnchor = null;
+    }
+    if (Array.isArray(frame.tweetsList)) currentTweetsList = frame.tweetsList.slice();
+    syncChromeForView(frame.view);
+    const container = typeof document !== 'undefined' ? document.getElementById('mainContent') : null;
+    if (container) {
+        if (frame.nodes && frame.nodes.firstChild && typeof container.appendChild === 'function') {
+            container.innerHTML = '';
+            container.appendChild(frame.nodes);
+        } else {
+            container.innerHTML = frame.markup || '';
+        }
+    }
+    if (frame.view === 'search') {
+        const inp = typeof document !== 'undefined' ? document.getElementById('searchInput') : null;
+        if (inp && typeof frame.searchInputValue === 'string') inp.value = frame.searchInputValue;
+        blurActiveSearchInput();
+    }
+    syncVisibleTweetActions();
+    if (container && frame.view !== 'settings' && frame.view !== 'post') {
+        restoreScrollPosition(frame.scrollY, frame.anchor, container);
+        initVideoAutoPauseObserver(container);
+    }
+    updateScrollTopButton();
+    return true;
+}
+
+function canPushBackEntryFromCurrentView() {
+    if (!hasRenderedNavView) return false;
+    if (currentView !== 'feed') return true;
+    const feedEl = typeof document !== 'undefined' ? document.getElementById('feedContainer') : null;
+    return Boolean(feedEl || currentTweetsList.length > 0 || savedFeedNodes);
+}
+
+function nav(view, opts = {}) {
+    if (typeof cancelPendingScrollRestore === 'function') cancelPendingScrollRestore();
+    if (typeof closeLightbox === 'function' && lightboxState) closeLightbox(null, { skipHistory: true });
     const returningFromThread = currentView === 'thread' && threadOriginView === 'feed';
     const returningProfile = currentView === 'thread' && threadOriginView === 'profile';
     const returningNotif = currentView === 'thread' && threadOriginView === 'notifications';
-    if (view !== 'feed' && view !== 'profile') {
-        savedFeedMarkup = '';
-        savedFeedNodes = null;
-        savedFeedAnchor = null;
-        savedFeedRequestInterrupted = false;
-    }
-    if (view !== 'post') composeQuoteTweetId = null;
-    if (view !== 'feed') {
+
+    if (view !== 'feed' && !opts.fromPopstate && canPushBackEntryFromCurrentView()) {
+        pushHistorySnapshot(view, opts.historyState || {}, opts.hash || ('#' + view));
+    } else if (view !== 'feed') {
         if (currentView === 'feed') {
             saveSeenForYouIds();
             flushSeenLinger(false);
@@ -3410,22 +3657,27 @@ function nav(view) {
         disconnectFeedAutoLoader();
         pauseAllFeedVideos();
     }
+
+    if (view === 'feed' && !opts.fromPopstate) {
+        const stepsBack = activeHistoryPushes;
+        viewHistoryStack = [];
+        currentStackDepth = 0;
+        if (stepsBack > 0 && typeof history !== 'undefined' && typeof history.go === 'function'
+            && history.state && Number(history.state.stackDepth || 0) > 0) {
+            skipNextFeedRootPopstate = true;
+            activeHistoryPushes = 0;
+            setTimeout(() => { skipNextFeedRootPopstate = false; }, 350);
+            try { history.go(-stepsBack); } catch (_) {}
+        }
+    }
+
+    if (opts.profileState) profileState = opts.profileState;
+    if (view !== 'post') composeQuoteTweetId = null;
     activeThreadTweetId = null;
     currentView = view;
     viewGeneration++;
-    syncInFeedBodyClass();
-    pullRefreshState.armed = false;
-    pullRefreshState.pulling = false;
-    pullRefreshState.refreshing = false;
-    setPullIndicator('idle');
-    const bottomTabs = ['feed', 'search', 'post', 'settings'];
-    document.querySelectorAll('.bottom-item').forEach((el, idx) => {
-        el.classList.toggle('active', bottomTabs[idx] === view);
-    });
-    updateHeaderActions();
-
-    const tabNav = document.getElementById('tabNav');
-    if (tabNav && tabNav.style) tabNav.style.display = (view === 'feed') ? 'flex' : 'none';
+    hasRenderedNavView = true;
+    syncChromeForView(view);
 
     if (view === 'feed') {
         restoreFeedView(currentTab, returningFromThread);
@@ -3449,13 +3701,13 @@ function switchFeed(tab) {
     prebufferedNextPage.foryou = null;
     prebufferedNextPage.following = null;
     if (typeof cancelPendingScrollRestore === 'function') cancelPendingScrollRestore();
-    savedFeedMarkup = '';
-    savedFeedNodes = null;
-    savedFeedAnchor = null;
-    savedFeedRequestInterrupted = false;
+    invalidateSavedFeed();
+    viewHistoryStack = [];
+    currentStackDepth = 0;
     activeThreadTweetId = null;
     currentView = 'feed';
     viewGeneration++;
+    hasRenderedNavView = true;
     syncInFeedBodyClass();
     pullRefreshState.armed = false;
     pullRefreshState.pulling = false;
@@ -3541,6 +3793,9 @@ function findTweetById(twId) {
     if (!key) return null;
     if (allTweetsMap[key]) return allTweetsMap[key];
     let found = currentTweetsList.find(t => t && String(t.id) === key);
+    if (!found && Array.isArray(profileState?.tweets)) {
+        found = profileState.tweets.find(t => t && String(t.id) === key);
+    }
     if (!found) found = getBookmarks().find(t => t && String(t.id) === key);
     if (!found && window.AndroidBridge && AndroidBridge.getCache) {
         try {
@@ -3622,6 +3877,13 @@ function syncTweetActionState(twId) {
     syncTweetActionDom(document, key, tw);
     if (typeof savedFeedNodes !== 'undefined' && savedFeedNodes) {
         syncTweetActionDom(savedFeedNodes, key, tw);
+    }
+    if (Array.isArray(viewHistoryStack) && viewHistoryStack.length) {
+        viewHistoryStack.forEach(frame => {
+            if (frame && frame.nodes && frame.nodes !== savedFeedNodes) {
+                syncTweetActionDom(frame.nodes, key, tw);
+            }
+        });
     }
 }
 
@@ -3740,11 +4002,13 @@ function toggleBookmark(twId, event) {
         list.splice(idx, 1);
         if (tweetObj) tweetObj.bookmarked = false;
         saveBookmarks(list);
+        if (savedFeedTab === 'cache') savedFeedCacheDirty = true;
         showStatus('Removed from offline saved', false, 2000);
     } else if (tweetObj) {
         tweetObj.bookmarked = true;
         list.unshift({ ...tweetObj });
         saveBookmarks(list);
+        if (savedFeedTab === 'cache') savedFeedCacheDirty = true;
         showStatus('Saved for offline reading', false, 2000);
     } else {
         showStatus('Could not save tweet offline', true, 3000);
@@ -3866,6 +4130,7 @@ function loadThumbImg(btn, url, imgId, hdUrl = url) {
     const img = document.createElement('img');
     img.id = imgId;
     img.className = 'tweet-img';
+    if (btn.dataset?.aspect && img.style) img.style.aspectRatio = btn.dataset.aspect;
     activeImageLoads.add(img);
     const timer = setTimeout(() => {
         if (!settled && typeof img.onerror === 'function') img.onerror();
@@ -4157,6 +4422,18 @@ function openLightbox(twId, idx, event) {
         index: Math.max(0, Math.min(photos.length - 1, Number(idx) || 0)),
         zoomed: false
     };
+    if (!lightboxHistoryPushed && typeof history !== 'undefined' && typeof history.pushState === 'function') {
+        try {
+            const locUrl = (typeof window !== 'undefined' && window.location)
+                ? ((window.location.pathname || '') + (window.location.search || '') + (window.location.hash || ''))
+                : '';
+            history.pushState({ view: 'lightbox', parentDepth: currentStackDepth }, '', locUrl || '#media');
+            if (history.state && history.state.view === 'lightbox') {
+                lightboxHistoryPushed = true;
+                activeHistoryPushes++;
+            }
+        } catch (_) {}
+    }
     initLightboxGestures();
     const modal = document.getElementById('mediaLightbox');
     if (modal) modal.classList.add('open');
@@ -4181,7 +4458,7 @@ function toggleLightboxZoom(event) {
     renderLightboxFrame();
 }
 
-function closeLightbox(event) {
+function closeLightbox(event, opts = {}) {
     if (event && event.stopPropagation) event.stopPropagation();
     if (event && lightboxGestureSuppressedClick) return;
     lightboxState = null;
@@ -4193,6 +4470,16 @@ function closeLightbox(event) {
     if (img) {
         img.classList.remove('zoomed');
         img.removeAttribute('src');
+    }
+    if (lightboxHistoryPushed && !opts.fromPopstate && !opts.skipHistory
+        && typeof history !== 'undefined' && history.state && history.state.view === 'lightbox'
+        && typeof history.back === 'function') {
+        lightboxHistoryPushed = false;
+        ignoreNextLightboxPopstate = true;
+        setTimeout(() => { ignoreNextLightboxPopstate = false; }, 250);
+        try { history.back(); } catch (_) {}
+    } else {
+        lightboxHistoryPushed = false;
     }
     updateScrollTopButton();
 }
@@ -4220,6 +4507,7 @@ function pauseOtherVideos(activeVid) {
 
 function fallbackVideoSource(vid, forcePlay = false) {
     if (!vid || !vid.dataset) return;
+    if (vid.dataset.xliteParkedSrc) return;
     const fallbackSrc = vid.dataset.fallbackSrc;
     if (!fallbackSrc) return;
     const nextFallback = vid.dataset.fallbackSd || '';
@@ -4239,7 +4527,7 @@ function fallbackVideoSource(vid, forcePlay = false) {
     clearVideoStallTimer(vid);
     const curTime = Number(vid.currentTime) || 0;
     const wasPlaying = !vid.paused || !!forcePlay;
-    vid.preload = 'auto';
+    vid.preload = wasPlaying ? 'auto' : (vid.preload || 'metadata');
     vid.src = fallbackSrc;
     try { if (typeof vid.load === 'function') vid.load(); } catch (_) {}
     if (curTime > 0 || wasPlaying) {
@@ -4351,10 +4639,13 @@ function renderMediaHtml(tw) {
             } else {
                 const imgId = 'img_' + Math.random().toString(36).substr(2, 9);
                 const previewUrl = mediaPosterUrl(m.url);
+                const posterAspectStyle = (Number(m.width) > 0 && Number(m.height) > 0)
+                    ? ` style="aspect-ratio:${Math.max(1, Math.round(Number(m.width)))} / ${Math.max(1, Math.round(Number(m.height)))};"`
+                    : '';
                 out += `
                 <div>
                     <div style="font-size:12px; color:var(--text-muted); margin-top:6px;">${isGif ? 'GIF' : 'Video'}${durText ? ' · ' + durText : ''} · poster frame</div>
-                    <img id="${imgId}" src="${posterSrc}" class="tweet-img" loading="lazy" data-preview-url="${escapeHtml(previewUrl)}" data-original-url="${escapeHtml(m.url)}" onerror="retryOriginalPreview(this)" />
+                    <img id="${imgId}" src="${posterSrc}" class="tweet-img"${posterAspectStyle} loading="lazy" data-preview-url="${escapeHtml(previewUrl)}" data-original-url="${escapeHtml(m.url)}" onerror="retryOriginalPreview(this)" />
                 </div>`;
             }
             if (m.alt_text) out += `<div style="font-size:12px; color:var(--text-muted); margin-top:5px;">${escapeHtml(m.alt_text)}</div>`;
@@ -4371,9 +4662,12 @@ function renderMediaHtml(tw) {
         if (appConfig.image_mode === 'off') {
             out += `<div style="font-size:13px; color:var(--text-muted); margin-top:4px;">[${mediaLabel}]</div>`;
         } else {
+            const aspectAttr = (Number(m.width) > 0 && Number(m.height) > 0)
+                ? ` data-aspect="${Math.max(1, Math.round(Number(m.width)))} / ${Math.max(1, Math.round(Number(m.height)))}"`
+                : '';
             out += `
             <div style="margin-top:6px;">
-                <button type="button" class="btn btn-secondary btn-block" data-url="${escapeHtml(previewUrl)}" data-hd-url="${escapeHtml(m.url)}" onclick="loadThumbImg(this, this.dataset.url, '${imgId}', this.dataset.hdUrl)" style="font-size:13px; padding:8px 14px;">
+                <button type="button" class="btn btn-secondary btn-block" data-url="${escapeHtml(previewUrl)}" data-hd-url="${escapeHtml(m.url)}"${aspectAttr} onclick="loadThumbImg(this, this.dataset.url, '${imgId}', this.dataset.hdUrl)" style="font-size:13px; padding:8px 14px;">
                     ${isVideo ? 'Load poster frame' : 'Load small preview'}
                 </button>
             </div>`;
@@ -5491,12 +5785,13 @@ function captureViewAnchor(root, tweetId, capturedScrollY) {
         if (candidates.length > 0) return null;
     }
 
+    const minVisibleTop = currentView === 'feed' ? 96 : 56;
     const cards = Array.from(scope.querySelectorAll('[data-id], [data-tweet-id]'));
     for (let i = 0; i < cards.length; i++) {
         const el = cards[i];
         if (typeof el.getBoundingClientRect !== 'function') continue;
         const rect = el.getBoundingClientRect();
-        if (isRectMeasurable(rect) && rect.bottom > 56 && rect.top < viewportH) {
+        if (isRectMeasurable(rect) && rect.bottom > minVisibleTop && rect.top < viewportH) {
             const attr = el.getAttribute('data-id') ? 'data-id' : 'data-tweet-id';
             const cardId = el.getAttribute(attr);
             if (cardId) return makeAnchor(el, attr, cardId);
@@ -5540,11 +5835,19 @@ function restoreScrollPosition(scrollY, anchor = null, root = null) {
     cancelPendingScrollRestore();
     const token = ++activeScrollRestoreToken;
     const fallbackTarget = Math.max(0, Number(scrollY) || 0);
-    const canRestoreView = () => activeScrollRestoreToken === token && ['feed', 'search', 'profile', 'notifications'].includes(currentView);
+    const canRestoreView = () => activeScrollRestoreToken === token
+        && ['feed', 'search', 'profile', 'notifications', 'thread'].includes(currentView);
     const anchorRoot = getScrollRestoreRoot(root);
+    const docEl = (typeof document !== 'undefined' && document.documentElement) ? document.documentElement : null;
+    const prevOverflowAnchor = (docEl && docEl.style) ? (docEl.style.overflowAnchor || '') : '';
+    if (docEl && docEl.style) docEl.style.overflowAnchor = 'none';
     const timers = [];
+    let idleTimer = null;
+    let settleRafId = null;
     let rafId = null;
     let listenersAttached = false;
+    let mediaListenersAttached = false;
+    let resizeObs = null;
 
     const detachInputCancelListeners = () => {
         if (!listenersAttached || typeof window === 'undefined' || typeof window.removeEventListener !== 'function') return;
@@ -5554,8 +5857,26 @@ function restoreScrollPosition(scrollY, anchor = null, root = null) {
         });
     };
 
+    const detachMediaSettlement = () => {
+        if (mediaListenersAttached && anchorRoot && typeof anchorRoot.removeEventListener === 'function') {
+            ['load', 'loadedmetadata', 'error'].forEach(evt => {
+                anchorRoot.removeEventListener(evt, onMediaOrLayoutSettle, true);
+            });
+            mediaListenersAttached = false;
+        }
+        if (resizeObs) {
+            try { resizeObs.disconnect(); } catch (_) {}
+            resizeObs = null;
+        }
+    };
+
     const cleanup = () => {
         detachInputCancelListeners();
+        detachMediaSettlement();
+        if (idleTimer !== null && typeof clearTimeout === 'function') {
+            clearTimeout(idleTimer);
+            idleTimer = null;
+        }
         while (timers.length > 0) {
             const id = timers.pop();
             if (typeof clearTimeout === 'function') clearTimeout(id);
@@ -5564,19 +5885,16 @@ function restoreScrollPosition(scrollY, anchor = null, root = null) {
             cancelAnimationFrame(rafId);
             rafId = null;
         }
+        if (settleRafId !== null && typeof cancelAnimationFrame === 'function') {
+            cancelAnimationFrame(settleRafId);
+            settleRafId = null;
+        }
+        if (docEl && docEl.style) docEl.style.overflowAnchor = prevOverflowAnchor;
         if (activeScrollRestoreCancel === cleanup) activeScrollRestoreCancel = null;
     };
 
     function onUserScrollInput() {
         cancelPendingScrollRestore();
-    }
-
-    activeScrollRestoreCancel = cleanup;
-    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-        listenersAttached = true;
-        ['touchstart', 'pointerdown', 'wheel', 'keydown'].forEach(evt => {
-            window.addEventListener(evt, onUserScrollInput, { passive: true, capture: true });
-        });
     }
 
     const applyPass = () => {
@@ -5588,6 +5906,49 @@ function restoreScrollPosition(scrollY, anchor = null, root = null) {
         if (typeof window.scrollTo === 'function') window.scrollTo(0, target);
     };
 
+    const bumpIdleFinish = () => {
+        if (typeof setTimeout !== 'function' || typeof clearTimeout !== 'function') return;
+        if (idleTimer !== null) clearTimeout(idleTimer);
+        idleTimer = setTimeout(cleanup, 300);
+    };
+
+    function onMediaOrLayoutSettle() {
+        if (!canRestoreView()) {
+            cleanup();
+            return;
+        }
+        bumpIdleFinish();
+        if (settleRafId !== null) return;
+        if (typeof requestAnimationFrame === 'function') {
+            settleRafId = requestAnimationFrame(() => {
+                settleRafId = null;
+                applyPass();
+            });
+        } else {
+            applyPass();
+        }
+    }
+
+    activeScrollRestoreCancel = cleanup;
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        listenersAttached = true;
+        ['touchstart', 'pointerdown', 'wheel', 'keydown'].forEach(evt => {
+            window.addEventListener(evt, onUserScrollInput, { passive: true, capture: true });
+        });
+    }
+    if (anchorRoot && typeof anchorRoot.addEventListener === 'function') {
+        mediaListenersAttached = true;
+        ['load', 'loadedmetadata', 'error'].forEach(evt => {
+            anchorRoot.addEventListener(evt, onMediaOrLayoutSettle, { passive: true, capture: true });
+        });
+    }
+    if (typeof ResizeObserver === 'function' && anchorRoot && anchorRoot.nodeType === 1) {
+        try {
+            resizeObs = new ResizeObserver(onMediaOrLayoutSettle);
+            resizeObs.observe(anchorRoot);
+        } catch (_) { resizeObs = null; }
+    }
+
     applyPass();
     if (typeof requestAnimationFrame === 'function') {
         rafId = requestAnimationFrame(() => {
@@ -5596,67 +5957,26 @@ function restoreScrollPosition(scrollY, anchor = null, root = null) {
         });
     }
     if (typeof setTimeout === 'function') {
-        [60, 180, 340].forEach(delay => {
+        [60, 180, 340, 700, 1250].forEach(delay => {
             timers.push(setTimeout(applyPass, delay));
         });
-        timers.push(setTimeout(cleanup, 400));
+        timers.push(setTimeout(cleanup, 2400));
     }
 }
 
 // Conversation / Thread View
 function viewThread(tweetId, focusReply = false) {
     if (typeof cancelPendingScrollRestore === 'function') cancelPendingScrollRestore();
+    if (typeof closeLightbox === 'function' && lightboxState) closeLightbox(null, { skipHistory: true });
     markTweetSeen(tweetId);
-    const capturedScrollY = getCurrentScrollY();
-    const mainContainer = document.getElementById('mainContent');
-    if (currentView !== 'thread') {
-        threadOriginView = currentView;
-        if (currentView === 'feed') {
-            savedFeedScrollY = capturedScrollY;
-            savedFeedAnchor = captureViewAnchor(mainContainer, tweetId, capturedScrollY);
-            savedFeedTab = currentTab;
-            savedFeedRequestInterrupted = !!(isFetching && isFetching.startsWith(currentTab + ':' + viewGeneration + ':'));
-            if (savedFeedRequestInterrupted) isFetching = false;
-            disconnectSeenObserver();
-            disconnectFeedAutoLoader();
-            pauseAllFeedVideos();
-            savedFeedMarkup = mainContainer.innerHTML;
-            savedFeedNodes = document.createDocumentFragment();
-            while (mainContainer.firstChild) savedFeedNodes.appendChild(mainContainer.firstChild);
-        } else if (currentView === 'search') {
-            savedSearchScrollY = capturedScrollY;
-            savedSearchAnchor = captureViewAnchor(mainContainer, tweetId, capturedScrollY);
-            if (searchState && searchState.loading) {
-                searchState.loading = false;
-                if (searchState.cursor) renderSearchLoadMore('Search was interrupted. Retry to continue.');
-                else {
-                    document.getElementById('searchResults').innerHTML = '<div class="card"><p class="card-desc">Search was interrupted. Search again to retry.</p></div>';
-                    document.getElementById('searchBtn').disabled = false;
-                }
-            }
-            savedSearchMarkup = document.getElementById('mainContent').innerHTML;
-        } else if (currentView === 'profile') {
-            savedProfileScrollY = capturedScrollY;
-            savedProfileAnchor = captureViewAnchor(mainContainer, tweetId, capturedScrollY);
-            pauseAllFeedVideos();
-            savedProfileMarkup = mainContainer.innerHTML;
-        } else if (currentView === 'notifications') {
-            savedNotifScrollY = capturedScrollY;
-            savedNotifAnchor = captureViewAnchor(mainContainer, tweetId, capturedScrollY);
-            savedNotifMarkup = mainContainer.innerHTML;
-        }
-    }
+    const originBeforePush = currentView === 'thread' ? threadOriginView : currentView;
+    pushHistorySnapshot('thread', { id: tweetId, originView: originBeforePush, originTab: currentTab }, '#thread-' + tweetId, tweetId);
+    threadOriginView = originBeforePush;
     currentView = 'thread';
     viewGeneration++;
-    syncInFeedBodyClass();
-    pullRefreshState.armed = false;
-    pullRefreshState.pulling = false;
-    pullRefreshState.refreshing = false;
-    setPullIndicator('idle');
+    hasRenderedNavView = true;
     currentFeedOrigin = currentTab;
-    updateHeaderActions();
-    updateScrollTopButton();
-    history.pushState({ view: 'thread', id: tweetId, originView: threadOriginView, originTab: currentTab }, '', '#thread-' + tweetId);
+    syncChromeForView('thread');
     renderThreadView(tweetId, focusReply);
 }
 
@@ -5989,10 +6309,20 @@ function restoreNonFeedOrigin() {
 }
 
 function goBackToFeed() {
-    if (window.history.state && window.history.state.view === 'thread') {
+    if (viewHistoryStack.length > 0 && window.history && window.history.state && Number(window.history.state.stackDepth) > 0 && typeof window.history.back === 'function') {
         window.history.back();
-    } else if (!restoreNonFeedOrigin()) {
-        restoreFeedView(currentFeedOrigin, threadOriginView === 'feed');
+        return;
+    }
+    if (window.history && window.history.state && window.history.state.view && typeof window.history.back === 'function') {
+        window.history.back();
+        return;
+    }
+    if (viewHistoryStack.length > 0) {
+        const frame = viewHistoryStack.pop();
+        if (restoreViewSnapshot(frame)) return;
+    }
+    if (!restoreNonFeedOrigin()) {
+        restoreFeedView(currentFeedOrigin || currentTab, threadOriginView === 'feed');
     }
 }
 
@@ -6016,14 +6346,14 @@ function restoreFeedView(targetTab, fromThread = false) {
     });
     updateHeaderActions();
     updateScrollTopButton();
-    if (window.location.hash.startsWith('#thread-')) {
+    if (window.location.hash && window.location.hash.length > 1) {
         try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch(e){}
     }
     const canRestoreSavedFeed = Boolean(
         savedFeedMarkup &&
         savedFeedTab === currentTab &&
         savedFeedMarkup.includes('id="feedContainer"') &&
-        currentTab !== 'cache' &&
+        !savedFeedCacheDirty &&
         (fromThread || savedFeedNodes)
     );
     if (canRestoreSavedFeed) {
@@ -6036,6 +6366,7 @@ function restoreFeedView(targetTab, fromThread = false) {
         } else {
             container.innerHTML = savedFeedMarkup;
         }
+        if (savedFeedTweetsList.length) currentTweetsList = savedFeedTweetsList.slice();
         syncVisibleTweetActions();
         if (savedFeedRequestInterrupted) {
             setFeedProgress(false, 'Loading interrupted. Pull down to retry.', true);
@@ -6045,10 +6376,7 @@ function restoreFeedView(targetTab, fromThread = false) {
                 loadMoreButton.textContent = 'Load More';
             }
         }
-        savedFeedMarkup = '';
-        savedFeedNodes = null;
-        savedFeedAnchor = null;
-        savedFeedRequestInterrupted = false;
+        invalidateSavedFeed();
         restoreScrollPosition(scrollY, anchor, container);
         initSeenObserver(document.getElementById('feedContainer'));
         initVideoAutoPauseObserver(container);
@@ -6059,21 +6387,54 @@ function restoreFeedView(targetTab, fromThread = false) {
     const cacheScrollY = fromThread && currentTab === 'cache' ? savedFeedScrollY : null;
     const cacheAnchor = fromThread && currentTab === 'cache' ? savedFeedAnchor : null;
     if (cacheScrollY === null && typeof cancelPendingScrollRestore === 'function') cancelPendingScrollRestore();
-    savedFeedMarkup = '';
-    savedFeedNodes = null;
-    savedFeedAnchor = null;
-    savedFeedRequestInterrupted = false;
+    invalidateSavedFeed();
     loadFeed(currentTab);
     if (cacheScrollY !== null) restoreScrollPosition(cacheScrollY, cacheAnchor, document.getElementById('mainContent'));
 }
 
 // History stack back navigation
 window.onpopstate = function(e) {
-    if (lightboxState) closeLightbox();
+    if (ignoreNextLightboxPopstate) {
+        ignoreNextLightboxPopstate = false;
+        activeHistoryPushes = Math.max(0, activeHistoryPushes - 1);
+        return;
+    }
+    if (lightboxState) {
+        lightboxHistoryPushed = false;
+        activeHistoryPushes = Math.max(0, activeHistoryPushes - 1);
+        closeLightbox(null, { fromPopstate: true });
+        return;
+    }
+    if (skipNextFeedRootPopstate) {
+        skipNextFeedRootPopstate = false;
+        if (!e.state || Number(e.state.stackDepth || 0) === 0) {
+            activeHistoryPushes = 0;
+            currentStackDepth = 0;
+            return;
+        }
+    }
+    activeHistoryPushes = Math.max(0, activeHistoryPushes - 1);
+    const targetDepth = (e.state && e.state.stackDepth !== undefined) ? Number(e.state.stackDepth) : null;
+    if (viewHistoryStack.length > 0) {
+        if (targetDepth !== null) {
+            while (viewHistoryStack.length && Number(viewHistoryStack[viewHistoryStack.length - 1].depth) > targetDepth) {
+                viewHistoryStack.pop();
+            }
+            if (viewHistoryStack.length && Number(viewHistoryStack[viewHistoryStack.length - 1].depth) === targetDepth) {
+                restoreViewSnapshot(viewHistoryStack.pop());
+                return;
+            }
+        } else {
+            restoreViewSnapshot(viewHistoryStack.pop());
+            return;
+        }
+    }
     if (e.state && e.state.view === 'thread') {
+        activeThreadTweetId = String(e.state.id || '');
+        threadOriginView = e.state.originView || threadOriginView;
         currentView = 'thread';
         viewGeneration++;
-        updateHeaderActions();
+        syncChromeForView('thread');
         renderThreadView(e.state.id);
     } else if (currentView === 'thread' && restoreNonFeedOrigin()) {
         return;
@@ -6356,6 +6717,7 @@ function fetchSearchPage(generation, cursor) {
         if (isPaging) {
             currentTweetsList.push(...freshTweets);
             resDiv.insertAdjacentHTML('beforeend', freshTweets.map(renderTweetHtml).join(''));
+            initVideoAutoPauseObserver(resDiv);
         } else {
             renderSearchResults(q, freshTweets, resDiv);
         }
@@ -6565,7 +6927,7 @@ function executePostTweet(e) {
 function openProfile(screenName) {
     const clean = String(screenName || '').replace(/^@+/, '').trim();
     if (!clean) return;
-    profileState = {
+    const nextProfileState = {
         screenName: clean,
         user: null,
         tab: 'tweets',
@@ -6575,7 +6937,11 @@ function openProfile(screenName) {
         loadingMore: false,
         error: ''
     };
-    nav('profile');
+    nav('profile', {
+        profileState: nextProfileState,
+        hash: '#profile-' + encodeURIComponent(clean),
+        historyState: { screenName: clean }
+    });
 }
 
 function openOwnProfile() {
@@ -6688,13 +7054,13 @@ function renderProfileShell(container) {
     } else {
         bodyHtml = profileState.tweets.map(renderTweetHtml).join('');
         if (profileState.cursor) {
-            bodyHtml += `<div class="load-more-box"><button type="button" id="profileMoreBtn" class="btn btn-secondary btn-block" style="padding:10px;" onclick="loadMoreProfileTweets()" ${profileState.loadingMore ? 'disabled' : ''}>${profileState.loadingMore ? 'Loading...' : 'Load More'}</button></div>`;
+            bodyHtml += `<div id="profileMoreWrap" class="load-more-box"><button type="button" id="profileMoreBtn" class="btn btn-secondary btn-block" style="padding:10px;" onclick="loadMoreProfileTweets()" ${profileState.loadingMore ? 'disabled' : ''}>${profileState.loadingMore ? 'Loading...' : 'Load More'}</button></div>`;
         }
     }
 
     container.innerHTML = `
     <div class="sub-header">
-        <button type="button" class="back-btn" onclick="restoreFeedView(currentFeedOrigin || currentTab, false)">&larr;</button>
+        <button type="button" class="back-btn" onclick="goBackToFeed()">&larr;</button>
         <span>${u ? escapeHtml(u.name) : '@' + escapeHtml(handle)}</span>
     </div>
     ${headerCard}
@@ -6775,10 +7141,22 @@ function fetchProfileTimeline(gen, isPaging) {
         } else {
             const existing = new Set(profileState.tweets.map(t => t.id));
             const added = (parsed.tweets || []).filter(t => t && !existing.has(t.id) && existing.add(t.id));
+            (parsed.tweets || []).forEach(t => { if (t && t.id) allTweetsMap[t.id] = t; });
             if (isPaging) profileState.tweets.push(...added);
             else profileState.tweets = parsed.tweets || [];
             profileState.cursor = parsed.nextCursor || null;
             profileState.error = '';
+            const feedBox = document.getElementById('profileFeedBox');
+            if (isPaging && feedBox) {
+                const oldMore = document.getElementById('profileMoreWrap') || document.getElementById('profileMoreBtn')?.parentElement;
+                if (oldMore && typeof oldMore.remove === 'function') oldMore.remove();
+                if (added.length) feedBox.insertAdjacentHTML('beforeend', added.map(renderTweetHtml).join(''));
+                if (profileState.cursor) {
+                    feedBox.insertAdjacentHTML('beforeend', `<div id="profileMoreWrap" class="load-more-box"><button type="button" id="profileMoreBtn" class="btn btn-secondary btn-block" style="padding:10px;" onclick="loadMoreProfileTweets()">Load More</button></div>`);
+                }
+                initVideoAutoPauseObserver(feedBox);
+                return;
+            }
         }
         renderProfileShell(document.getElementById('mainContent'));
     });
@@ -6819,7 +7197,7 @@ function renderNotifications() {
     const gen = viewGeneration;
     container.innerHTML = `
     <div class="sub-header">
-        <button type="button" class="back-btn" onclick="restoreFeedView(currentFeedOrigin || currentTab, false)">&larr;</button>
+        <button type="button" class="back-btn" onclick="goBackToFeed()">&larr;</button>
         <span>Notifications</span>
     </div>
     <div id="notifListBox"><div class="spinner">Loading notifications...</div></div>`;
@@ -6928,7 +7306,7 @@ function renderSettings() {
 
     container.innerHTML = `
     <div class="thread-header">
-        <button type="button" class="back-btn" onclick="nav('feed')" aria-label="Back to feed">&larr;</button>
+        <button type="button" class="back-btn" onclick="goBackToFeed()" aria-label="Back">&larr;</button>
         <div style="font-weight:700; font-size:16px;">Settings</div>
     </div>
 
@@ -7117,10 +7495,7 @@ function handleSettingPrefChange(kind, rawValue) {
         label = 'Sync Seen Posts: ' + (sync ? 'Enabled' : 'Disabled');
     }
     if (typeof cancelPendingScrollRestore === 'function') cancelPendingScrollRestore();
-    savedFeedMarkup = '';
-    savedFeedNodes = null;
-    savedFeedAnchor = null;
-    savedFeedRequestInterrupted = false;
+    invalidateSavedFeed();
     const notice = document.getElementById('settingsPrefNotice');
     if (notice && label) notice.innerHTML = uiSvg('check') + ' Saved ' + escapeHtml(label);
     if (label) showStatus('Saved — ' + label, false, 1800);
@@ -7130,10 +7505,7 @@ function clearCachedTweets() {
     if (window.AndroidBridge && typeof AndroidBridge.clearCache === 'function') AndroidBridge.clearCache();
     clearLocalSeenState(true);
     if (typeof cancelPendingScrollRestore === 'function') cancelPendingScrollRestore();
-    savedFeedMarkup = '';
-    savedFeedNodes = null;
-    savedFeedAnchor = null;
-    savedFeedRequestInterrupted = false;
+    invalidateSavedFeed();
     alert('Cache cleared');
 }
 
@@ -7172,10 +7544,7 @@ function saveSettings(e) {
     appConfig = { auth_token: auth, ct0: ct0, image_mode: mode, avatar_mode: avatarMode, hide_ads: hideAds, sync_seen: syncSeen, autoplay_videos: autoplayVideos };
     syncRichBodyClass();
     if (typeof cancelPendingScrollRestore === 'function') cancelPendingScrollRestore();
-    savedFeedMarkup = '';
-    savedFeedNodes = null;
-    savedFeedAnchor = null;
-    savedFeedRequestInterrupted = false;
+    invalidateSavedFeed();
     updateHeaderActions();
     alert("Saved");
     nav('feed');
